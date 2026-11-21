@@ -340,8 +340,12 @@ export type CalleeIR =
   | { readonly kind: "ValueMethod"; readonly receiver: ExprIR; readonly name: string; readonly optional?: boolean }
   /** A function declared in the component body, by its field: `this.handleHit(id)`. */
   | { readonly kind: "Own"; readonly name: string }
-  /** A callback prop: `onDefeated()` or `onDefeated?.()`. Argument counts and types are left to the type-check. */
-  | { readonly kind: "Prop"; readonly name: string; readonly optional: boolean }
+  /**
+   * A callback prop: `onDefeated()` or `onDefeated?.()`. Argument counts and types are left to the type-check. `present`: the
+   * source proved it was passed where the call's arrow was made (`onGo === undefined ? undefined : () => onGo()`), which the
+   * generated code, reading it from `this.props` inside the arrow, cannot show TypeScript, so the call asserts it.
+   */
+  | { readonly kind: "Prop"; readonly name: string; readonly optional: boolean; readonly present?: boolean }
   /** A handler's own `const` or `let` holding a function: `const stop = settings.subscribe(…); … stop();`. The type-check checks it is one. */
   | { readonly kind: "Local"; readonly name: string };
 

@@ -30,6 +30,7 @@ import {
   isStringLiteral,
   isBlock,
   isReturnStatement,
+  isPrefixUnaryExpression,
 } from "typescript/ast/is";
 
 import { unwrapParens, type JsxRoot } from "../analyzer/analyzer.ts";
@@ -818,6 +819,17 @@ export class ElementLowering extends HookLowering {
           if (callback) props.push(callback);
           continue;
         }
+        // `onPress={open ? close : undefined}`: a callback chosen by a condition, or none. Each branch is lowered as the attribute
+        // would be on its own, and the choice is an ordinary prop, worked out again when what the condition reads changes, so
+        // a built-in has no handler while the branch taken is none: it does not take the press or the mouse.
+        if (isConditionalExpression(expression)) {
+          const params = toComponent ? undefined : this.manifest.intrinsicCallbacks[tag]?.[name];
+          if (toComponent ? this.choosesCallback(expression) : params) {
+            const chosen = this.lowerCallbackChoice(name, expression, params);
+            if (chosen) props.push(valueProp(name, chosen));
+            continue;
+          }
+        }
         // `onPress={resume}` (a game-state action) or, to a built-in, `onPress={onPress}` (a callback prop): a function passed whole.
         const passed = this.functionValue(expression);
         if (passed === null) continue;
@@ -841,6 +853,12 @@ export class ElementLowering extends HookLowering {
               );
               continue;
             }
+            // A callback prop forwarded to a built-in is the prop itself, read on render: when it was not passed, the built-in
+            // has none either, so it does not take the press or the mouse (a wrapper calling `onPress?.()` would).
+            if (passed.kind === "prop") {
+              props.push(valueProp(name, { kind: "PropRead", name: passed.name }));
+              continue;
+            }
             // Written as the arrow an author would write by hand: `onPress={() => resume()}`.
             const handlerParams = params.map((p) => ({
               id: localId(this.component.name, p.name, this.nextSerial()),
@@ -851,20 +869,13 @@ export class ElementLowering extends HookLowering {
             const body: StatementIR[] =
               passed.kind === "action"
                 ? [{ kind: "CallAction", action: passed.action, args }]
-                : passed.kind === "function"
-                  ? // A function that takes fewer than the callback is given (`onDragEnd={drop}`, `drop` taking nothing) is handed no more, as in TypeScript.
-                    [
-                      {
-                        kind: "ExpressionStatement",
-                        expression: { kind: "Call", callee: { kind: "Own", name: passed.field }, args: args.slice(0, passed.params) },
-                      },
-                    ]
-                  : [
-                      {
-                        kind: "ExpressionStatement",
-                        expression: { kind: "Call", callee: { kind: "Prop", name: passed.name, optional: true }, args },
-                      },
-                    ];
+                : // A function that takes fewer than the callback is given (`onDragEnd={drop}`, `drop` taking nothing) is handed no more, as in TypeScript.
+                  [
+                    {
+                      kind: "ExpressionStatement",
+                      expression: { kind: "Call", callee: { kind: "Own", name: passed.field }, args: args.slice(0, passed.params) },
+                    },
+                  ];
             props.push({ kind: "CallbackProp", name, handler: { kind: "Function", params: handlerParams, body } });
             continue;
           }
@@ -884,6 +895,139 @@ export class ElementLowering extends HookLowering {
       props.push(valueProp(name, value));
     }
     return props;
+  }
+
+  /**
+   * The value of a callback attribute written as a choice (`onPress={open ? close : undefined}`, nested choices too): each branch
+   * is no callback (`undefined` or `null`), an arrow, an action, a function of the component's or a callback prop, passed whole.
+   * `params` are a built-in's callback parameters (undefined for a component, whose props type gives them). Null when a branch
+   * is anything else (reported).
+   */
+  protected lowerCallbackChoice(
+    name: string,
+    node: Expression,
+    params: readonly { readonly name: string; readonly type: string }[] | undefined
+  ): ExprIR | null {
+    const expression = unwrapParens(node);
+    if (isConditionalExpression(expression)) {
+      const test = this.lowerPresenceTest(expression.condition);
+      const branch = (side: Expression, present: boolean): ExprIR | null => {
+        const outer = this.presentCallbacks;
+        this.presentCallbacks = new Set([...outer, ...this.callbacksPresentWhen(expression.condition, present)]);
+        try {
+          return this.lowerCallbackChoice(name, side, params);
+        } finally {
+          this.presentCallbacks = outer;
+        }
+      };
+      const whenTrue = branch(expression.whenTrue, true);
+      const whenFalse = branch(expression.whenFalse, false);
+      return test && whenTrue && whenFalse && { kind: "Conditional", test, whenTrue, whenFalse };
+    }
+    // `null` is written as `undefined`, which is what a built-in's callback member holds when it has none.
+    if (
+      expression.kind === SyntaxKind.NullKeyword ||
+      (isIdentifier(expression) && expression.text === "undefined" && !this.scope.has("undefined"))
+    ) {
+      return { kind: "PlainRef", name: "undefined" };
+    }
+    if (isArrowFunction(expression)) {
+      // An arrow handed to a component is typed by the component's props, which the code that keeps its props live cannot
+      // see: there, the arrow is a function of the component's, passed whole.
+      if (params === undefined) {
+        this.report(
+          DiagnosticCode.UnsupportedExpression,
+          `A choice of callbacks for a component passes each one whole: declare the arrow in the component body (\`const go = (n: number) => …\`) and write \`${name}={… ? go : undefined}\`.`,
+          expression
+        );
+        return null;
+      }
+      const callback = this.lowerCallback(name, expression, params);
+      return callback && { kind: "Callback", fn: callback.handler };
+    }
+    const passed = this.functionValue(expression);
+    if (passed === null) return null;
+    switch (passed?.kind) {
+      case "prop":
+        return { kind: "PropRead", name: passed.name };
+      case "function":
+        return { kind: "PlainRef", name: `this.${passed.field}` };
+      case "action":
+        return { kind: "ActionRef", name: passed.action };
+      default:
+        this.report(
+          DiagnosticCode.UnsupportedExpression,
+          `Each branch of '${name}' must be a callback or none: an arrow (\`() => …\`), a function passed whole (\`onPress\`), or \`undefined\`.`,
+          expression
+        );
+        return null;
+    }
+  }
+
+  /** Whether a choice (`open ? close : undefined`) has a callback among its branches: an arrow, or a function passed whole. */
+  protected choosesCallback(node: Expression): boolean {
+    const expression = unwrapParens(node);
+    if (isConditionalExpression(expression)) return this.choosesCallback(expression.whenTrue) || this.choosesCallback(expression.whenFalse);
+    return isArrowFunction(expression) || this.functionValue(expression) !== undefined;
+  }
+
+  /**
+   * The condition of a choice of callbacks, where a callback prop may be tested for being passed by its truth as well as by
+   * comparing it with `undefined`: `onGo ? … : …`, `!onGo`, `onGo && onStop`. Anywhere else in it, it is not read as a value.
+   */
+  protected lowerPresenceTest(node: Expression): ExprIR | null {
+    const condition = unwrapParens(node);
+    if ((isIdentifier(condition) || isPropertyAccessExpression(condition)) && this.functionValue(condition)?.kind === "prop") {
+      return this.within({ allowCallbackRead: true }, () => this.lowerNode(condition));
+    }
+    if (isPrefixUnaryExpression(condition) && condition.operator === SyntaxKind.ExclamationToken) {
+      const operand = this.lowerPresenceTest(condition.operand);
+      return operand && { kind: "Unary", operator: "!", operand };
+    }
+    if (
+      isBinaryExpression(condition) &&
+      (condition.operatorToken.kind === SyntaxKind.AmpersandAmpersandToken || condition.operatorToken.kind === SyntaxKind.BarBarToken)
+    ) {
+      const left = this.lowerPresenceTest(condition.left);
+      const right = this.lowerPresenceTest(condition.right);
+      const operator = condition.operatorToken.kind === SyntaxKind.AmpersandAmpersandToken ? "&&" : "||";
+      return left && right && { kind: "Binary", operator, left, right };
+    }
+    return this.lowerNode(condition);
+  }
+
+  /**
+   * The callback props a condition proves were passed, in the branch it takes when it is `holds`: `onGo !== undefined` (or
+   * `!= null`, or `onGo` alone) when true, `onGo === undefined` (or `== null`, or `!onGo`) when false, and each side of an `&&`
+   * when true or of an `||` when false.
+   */
+  protected callbacksPresentWhen(node: Expression, holds: boolean): string[] {
+    const condition = unwrapParens(node);
+    const callbackProp = (side: Expression): string | null => {
+      const passed = isIdentifier(side) || isPropertyAccessExpression(side) ? this.functionValue(side) : undefined;
+      return passed?.kind === "prop" ? passed.name : null;
+    };
+    const named = callbackProp(condition);
+    if (named !== null) return holds ? [named] : [];
+    if (isPrefixUnaryExpression(condition) && condition.operator === SyntaxKind.ExclamationToken) {
+      return this.callbacksPresentWhen(condition.operand, !holds);
+    }
+    if (!isBinaryExpression(condition)) return [];
+    const operator = condition.operatorToken.kind;
+    if (operator === SyntaxKind.AmpersandAmpersandToken || operator === SyntaxKind.BarBarToken) {
+      if (holds !== (operator === SyntaxKind.AmpersandAmpersandToken)) return [];
+      return [...this.callbacksPresentWhen(condition.left, holds), ...this.callbacksPresentWhen(condition.right, holds)];
+    }
+    const absent = (side: Expression): boolean =>
+      side.kind === SyntaxKind.NullKeyword || (isIdentifier(side) && side.text === "undefined" && !this.scope.has("undefined"));
+    const left = unwrapParens(condition.left);
+    const right = unwrapParens(condition.right);
+    const prop = absent(right) ? callbackProp(left) : absent(left) ? callbackProp(right) : null;
+    if (prop === null) return [];
+    const unequal = operator === SyntaxKind.ExclamationEqualsEqualsToken || operator === SyntaxKind.ExclamationEqualsToken;
+    const equal = operator === SyntaxKind.EqualsEqualsEqualsToken || operator === SyntaxKind.EqualsEqualsToken;
+    // `!== undefined` leaves `null` possible, but a callback prop's type has no `null` in it: either way it was passed.
+    return (unequal && holds) || (equal && !holds) ? [prop] : [];
   }
 
   /**

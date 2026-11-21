@@ -127,6 +127,8 @@ export class LoweringBase {
   protected readonly sounds: SoundIR[] = [];
   /** Functions declared in the body (`const handleHit = (id: string) => { … }`). */
   protected readonly functions: OwnFunctionIR[] = [];
+  /** Callback props known to be passed where the arrow being lowered is made: see `lowerCallbackChoice`. */
+  protected presentCallbacks: ReadonlySet<string> = new Set();
   protected readonly gameState: GameStateDefinition | undefined;
   protected readonly storeImports: ReadonlySet<string>;
   /** Names of functions imported from relative `.ts` files, which a component may call and pass. */

@@ -227,7 +227,8 @@ it, since `setA(b); setB(a)` and `setX(x + 1)` twice would mean something React 
    now, through a getter the parent hands it (`GameObject.propGetters`, read as `this.$live_health`), so two towers firing at an
    enemy with 1 hp in the same step do not both fire: the second sees it dead. This holds for a plain child, a conditional one, a
    keyed list's items (found again by key in the live list), what is below a list item, an item that switches between two
-   elements, and a context value. A callback prop is never live: it is created once. A getter whose condition no longer holds, or
+   elements, and a context value. A callback prop is never live: it is created once (a choice of callbacks, see "A choice of callbacks", is made
+   again on render). A getter whose condition no longer holds, or
    whose item's key is gone, says nothing, and the child's last props stand. Render reads what the frame committed. React keeps
    reads stale for UI reasons (a consistent screen, concurrent rendering) that a fixed-step game loop does not have; the price is
    that update order is visible, which is why it is defined and tested.
@@ -2710,11 +2711,22 @@ is: neighbours in the list with one parent (the tiles of a board) share that ans
 walks up the tree once a frame, not 180 times. A `<Flex>` with only hover callbacks is collected for the mouse but
 lets a press through to what is under it. State is the component's: `onPointerEnter={() => { s.hovered = true; }}`.
 
-**Functions passed whole** (2026-11-11). `onPress={resume}` where `resume` is a game-state action, and
-`<Flex onPress={onPress}>` where `onPress` is the component's own callback prop (or `props.onPress`): to a built-in, the
-compiler writes the arrow the author would have (`() => useGame.getState().resume()`, `() => this.props.onPress?.()`), with the
-parameters the manifest lists; to a component, an action is the store's own function (`ActionRef`), a static prop, since an action
-never changes. A sound is not a value.
+**Functions passed whole** (2026-11-11). `onPress={resume}` where `resume` is a game-state action: to a built-in, the
+compiler writes the arrow the author would have (`() => useGame.getState().resume()`), with the parameters the manifest lists;
+to a component, an action is the store's own function (`ActionRef`), a static prop, since an action never changes. A sound is
+not a value. `<Flex onPress={onPress}>` where `onPress` is the component's own callback prop (or `props.onPress`) is the prop
+itself, a dynamic prop read on render (2026-11-21; it was an arrow calling `this.props.onPress?.()`, which made every box that
+forwarded an optional callback pressable, so it took presses and the mouse whether or not one was passed).
+
+**A choice of callbacks** (2026-11-21). `onPress={open ? close : undefined}`, nested choices too: each branch is lowered as
+the attribute would be alone (an arrow to a `Callback` expression, a callback prop to `PropRead`, a function of the component's
+to `this.field`, an action to `ActionRef`, `undefined` or `null` to `undefined`) and the choice is a dynamic prop, worked out
+again when what it reads changes, so a built-in has no handler while the branch taken is none. Its condition may test a
+callback prop by its truth (`onGo ? … : …`, `!onGo`, `onGo && onStop`) as well as against `undefined`. A branch the condition
+proves a callback prop was passed in (`onGo === undefined ? undefined : () => onGo()`) marks its calls of that prop `present`,
+written `this.props.onGo!()`: inside the arrow TypeScript no longer sees the narrowing of `this.props.onGo`, which the source's
+parameter keeps. A call the condition does not prove stays a type error. To a component each branch is passed whole: an arrow
+there would be typed by the component's props, which the live-prop getters cannot see, so it is declared in the body instead.
 
 **Collider callbacks.** `<Collider width={16} height={24} onCollisionEnter={(other) => …} />`
 is a callback prop on a built-in, which the manifest lists in
