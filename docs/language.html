@@ -530,7 +530,8 @@ export function Enemy({ speed, tint = "red", onDefeated }: EnemyProps) {
   <ul>
     <li><code>props: EnemyProps</code> also works (<code>props.speed</code>), but <code>props</code> cannot be passed on or spread. Defaults go in the destructuring.</li>
     <li>A prop may be read under another name, as in React: <code>({ seed: firstSeed, speed: rate = 2 }: EnemyProps)</code>, so a prop and the state it seeds can both be called what they are.</li>
-    <li>Callback props carry messages from child to parent. Call optional ones with <code>?.()</code>.</li>
+    <li>Callback props carry messages from child to parent. Call optional ones with <code>?.()</code>. Whether one was passed may be tested: <code>onAdjust === undefined</code>, or by its truth in a choice (below).</li>
+    <li>A callback attribute may be a choice: <code>onPress={open ? close : undefined}</code>. Each branch is an arrow, a function passed whole (a callback prop, a function of the component's, an action) or <code>undefined</code>, and the choice is made again when what its condition reads changes. While the branch taken is <code>undefined</code> a built-in has no handler, so the box does not take the press or the mouse; the same goes for <code>&lt;Flex onPress={onPress}&gt;</code> when <code>onPress</code> was not passed. A branch whose test proves a callback prop was passed may call it: <code>onPress === undefined ? undefined : () =&gt; onPress()</code>. To a component, each branch is passed whole: declare the arrow in the body (<code>const go = (n: number) =&gt; …</code>) and write <code>onGo={open ? go : undefined}</code>.</li>
     <li>A bad props form is <code>TSE1208</code>.</li>
   </ul>
 

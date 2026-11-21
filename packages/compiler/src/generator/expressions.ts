@@ -324,7 +324,7 @@ export class ExpressionEmitter {
           case "Method":
             return `${e.callee.receiver.name}.${e.callee.name}(${args})`;
           case "Prop":
-            return `this.props.${e.callee.name}${e.callee.optional ? "?." : ""}(${args})`;
+            return `this.props.${e.callee.name}${e.callee.optional ? "?." : e.callee.present === true ? "!" : ""}(${args})`;
           case "ArrayMethod":
             return `${this.expr(e.callee.receiver)}.${e.callee.name}(${args})`;
           case "ValueMethod":

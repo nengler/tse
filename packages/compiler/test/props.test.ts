@@ -653,7 +653,7 @@ function Panel(props: BarProps) { return <Entity name="Panel"><Bar onDone={props
 });
 
 describe("a callback prop forwarded to a built-in", () => {
-  it("is written as the arrow that calls it: `<Flex onPress={onPress}>`, `props.onPress` too", async () => {
+  it("is the prop itself: `<Flex onPress={onPress}>`, `props.onPress` too", async () => {
     const compiled = compile(`
 interface ButtonProps { onPress: () => void; label: string; }
 export function Button({ onPress, label }: ButtonProps) {
@@ -677,5 +677,153 @@ export function Plain(props: ButtonProps) {
     button.onPress!();
     plain.onPress!();
     assert.equal(presses, 11);
+  });
+
+  it("leaves the built-in without one when it was not passed, so the box does not take the press", async () => {
+    const compiled = compile(`
+interface PanelProps { onPress?: () => void }
+export function Panel({ onPress }: PanelProps) {
+  return <Flex onPress={onPress} />;
+}`);
+    assert.deepEqual(typeCheck(compiled), []);
+    const { Panel } = await load<{ Panel: new (p: { onPress?: () => void }) => Flex & { updateProps(p: object): void } }>(compiled);
+    const world = new World();
+    const panel = new Panel({});
+    world.mount(panel);
+    world.flush();
+    assert.equal(panel.onPress, undefined, "not passed: no handler");
+    let presses = 0;
+    panel.updateProps({ onPress: () => presses++ });
+    world.flush();
+    panel.onPress!();
+    assert.equal(presses, 1, "passed later: the handler is the prop");
+    panel.updateProps({ onPress: undefined });
+    world.flush();
+    assert.equal(panel.onPress, undefined, "taken away again: none");
+  });
+});
+
+describe("a choice of callbacks", () => {
+  it("gives a built-in the callback a condition chooses, or none, as the condition changes", async () => {
+    const compiled = compile(`
+export function Door() {
+  const s = useMutable({ open: false, knocks: 0, mode: 0 });
+  const knock = () => { s.knocks += 1; };
+  return (
+    <Flex onPress={s.open ? undefined : () => { s.knocks += 10; }}>
+      <Flex onPress={s.mode === 0 ? null : s.mode === 1 ? knock : () => { s.mode = 0; }} />
+      <Flex onDrag={s.open ? (x, y) => { s.knocks = x + y; } : undefined} />
+    </Flex>
+  );
+}`);
+    assert.deepEqual(typeCheck(compiled), []);
+    type DoorState = { $s_knocks: number; $s_mode: number; $set_s_open(v: boolean): void; $set_s_mode(v: number): void };
+    const { Door } = await load<{ Door: new () => Flex & DoorState }>(compiled);
+    const world = new World();
+    const door = new Door();
+    world.mount(door);
+    world.flush();
+    const [bell, mat] = door.children as Flex[];
+    assert.equal(bell!.onPress, undefined, "null is none");
+    assert.equal(mat!.onDrag, undefined);
+    door.onPress!();
+    world.flush();
+    assert.equal(door.$s_knocks, 10);
+    door.$set_s_open(true);
+    door.$set_s_mode(1);
+    world.flush();
+    assert.equal(door.onPress, undefined, "the branch taken is none: no handler");
+    bell!.onPress!();
+    world.flush();
+    assert.equal(door.$s_knocks, 11, "a function of the component's, passed whole");
+    mat!.onDrag!(3, 4);
+    world.flush();
+    assert.equal(door.$s_knocks, 7, "a built-in's callback parameters are typed");
+    door.$set_s_mode(2);
+    world.flush();
+    bell!.onPress!();
+    world.flush();
+    assert.equal(door.$s_mode, 0, "nested choices");
+  });
+
+  it("calls a callback prop in a branch its test proves was passed: `onPress === undefined ? undefined : () => onPress()`", async () => {
+    const compiled = compile(`
+interface PanelProps { onPress?: () => void; onDrop?: (x: number, y: number) => void; label: string }
+export function Panel({ onPress, onDrop, label }: PanelProps) {
+  return (
+    <Flex onPress={onPress === undefined ? undefined : () => onPress()}>
+      <Flex onPress={!onPress ? undefined : () => onPress()} />
+      <Flex onPress={onPress && onDrop ? () => { onPress(); onDrop(1, 2); } : undefined} />
+      <Flex onDrag={onDrop != null ? (x, y) => onDrop(x, y) : undefined} />
+      <Text>{label}</Text>
+    </Flex>
+  );
+}`);
+    assert.deepEqual(typeCheck(compiled), []);
+    const { Panel } = await load<{ Panel: new (p: object) => Flex & { updateProps(p: object): void } }>(compiled);
+    const world = new World();
+    const panel = new Panel({ label: "x" });
+    world.mount(panel);
+    world.flush();
+    const boxes = panel.children.filter((c): c is Flex => c instanceof Flex);
+    assert.deepEqual([panel.onPress, ...boxes.map((b) => b.onPress ?? b.onDrag)], [undefined, undefined, undefined, undefined]);
+    const calls: string[] = [];
+    panel.updateProps({ label: "x", onPress: () => calls.push("press"), onDrop: (x: number, y: number) => calls.push(`drop ${x},${y}`) });
+    world.flush();
+    panel.onPress!();
+    boxes[0]!.onPress!();
+    boxes[1]!.onPress!();
+    boxes[2]!.onDrag!(5, 6);
+    assert.deepEqual(calls, ["press", "press", "press", "drop 1,2", "drop 5,6"]);
+  });
+
+  it("still fails the type-check for a call its test does not prove: `open ? () => onPress() : undefined`", () => {
+    const compiled = compile(`
+export function Panel({ onPress, open }: { onPress?: () => void; open: boolean }) {
+  return <Flex onPress={open ? () => onPress() : undefined} />;
+}`);
+    assert.match(
+      typeCheck(compiled)
+        .map((d) => d.message)
+        .join("\n"),
+      /possibly 'undefined'/
+    );
+  });
+
+  it("passes a component a choice of functions passed whole, and leaves other choices of values alone", async () => {
+    const compiled = compile(`
+interface RowProps { onGo?: (n: number) => void; size: number }
+function Row({ onGo, size }: RowProps) { return <Flex width={size} onPress={() => onGo?.(size)} />; }
+export function List({ onPick }: { onPick?: (n: number) => void }) {
+  const s = useMutable({ open: false, picked: 0 });
+  const pick = (n: number) => { s.picked = n; };
+  return <Entity name="List"><Row onGo={s.open ? pick : onPick} size={s.open ? 2 : 1} /></Entity>;
+}`);
+    assert.deepEqual(typeCheck(compiled), []);
+    const { List } = await load<{ List: new (p: object) => Entity & { $s_picked: number; $set_s_open(v: boolean): void } }>(compiled);
+    const world = new World();
+    const picked: number[] = [];
+    const list = new List({ onPick: (n: number) => picked.push(n) });
+    world.mount(list);
+    world.flush();
+    const row = (): Flex => list.children[0] as Flex;
+    row().onPress!();
+    list.$set_s_open(true);
+    world.flush();
+    row().onPress!();
+    world.flush();
+    assert.deepEqual([picked, list.$s_picked], [[1], 2]);
+  });
+
+  it("rejects a branch that is not a callback, and an arrow in a choice for a component", () => {
+    assert.match(
+      compileErrors(`function A({ open }: { open: boolean }) { return <Flex onPress={open ? 3 : undefined} />; }`)[0]!.message,
+      /Each branch of 'onPress' must be a callback or none/
+    );
+    assert.match(
+      compileErrors(`function Row({ onGo }: { onGo?: (n: number) => void }) { return <Flex onPress={() => onGo?.(1)} />; }
+function A({ open }: { open: boolean }) { return <Row onGo={open ? (n) => {} : undefined} />; }`)[0]!.message,
+      /declare the arrow in the component body/
+    );
   });
 });

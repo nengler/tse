@@ -595,7 +595,16 @@ export class ExpressionLowering extends LoweringBase {
         }
         const args = this.lowerPlainArgs(node.arguments);
         if (!args) return null;
-        return { kind: "Call", callee: { kind: "Prop", name: member.name, optional: node.questionDotToken !== undefined }, args };
+        return {
+          kind: "Call",
+          callee: {
+            kind: "Prop",
+            name: member.name,
+            optional: node.questionDotToken !== undefined,
+            ...(this.presentCallbacks.has(member.name) ? { present: true as const } : {}),
+          },
+          args,
+        };
       }
     }
     // A callback prop: `onDefeated()` or `onDefeated?.()`. Arguments are not counted here; the type-check does that.
@@ -644,7 +653,16 @@ export class ExpressionLowering extends LoweringBase {
         }
         const args = this.lowerPlainArgs(node.arguments);
         if (!args) return null;
-        return { kind: "Call", callee: { kind: "Prop", name: binding.name, optional: node.questionDotToken !== undefined }, args };
+        return {
+          kind: "Call",
+          callee: {
+            kind: "Prop",
+            name: binding.name,
+            optional: node.questionDotToken !== undefined,
+            ...(this.presentCallbacks.has(binding.name) ? { present: true as const } : {}),
+          },
+          args,
+        };
       }
     }
     // A function imported from a relative .ts file: any arguments, opaque to the compiler and assumed pure.
