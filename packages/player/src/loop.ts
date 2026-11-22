@@ -474,7 +474,10 @@ export function createPlayer(backend: Backend, config: PlayerConfig): Player {
       if (pointer.onPress === undefined && pointer instanceof Flex && pointer.widget === WIDGET_NONE && !draggable(pointer)) continue;
       const point = i >= hudPointersFrom ? hudAt : at;
       if (clippedOff(pointer as unknown as GameObject, point.x, point.y)) continue;
-      if (world.reportPress(pointer, point.x, point.y)) {
+      // Over a box a drag would scroll, the press is heard when the button is let go, and not at all if the drag scrolls
+      // (`dispatchScrollDrag`), as a tap and a scroll are told apart on a phone. A pressable that takes drags keeps them.
+      const held = !draggable(pointer) && (pointer as Pressable).onHeldAt === undefined && scrollerAt(at, hudAt) !== null;
+      if (world.reportPress(pointer, point.x, point.y, held)) {
         dragX = point.x;
         dragY = point.y;
         input.pressHandledNext = true;
@@ -525,6 +528,27 @@ export function createPlayer(backend: Backend, config: PlayerConfig): Player {
     }
   };
 
+  /**
+   * The topmost `overflow="scroll"` box under the pointer that has something to scroll, whether it is in the HUD, and the
+   * pointer in its layer's coordinates; null for none. `at` and `hudAt` are the pointer in the world's and the HUD's.
+   */
+  const scrollerAt = (
+    at: { readonly x: number; readonly y: number },
+    hudAt: { readonly x: number; readonly y: number }
+  ): { box: Flex; hud: boolean; point: { readonly x: number; readonly y: number } } | null => {
+    for (let i = scrollers.length - 1; i >= 0; i--) {
+      const box = scrollers[i] as Flex;
+      if (box.world !== world || world.isInert(box)) continue;
+      const hud = i >= hudScrollersFrom;
+      const point = hud ? hudAt : at;
+      if (!box.contains(point.x, point.y) || clippedOff(box, point.x, point.y)) continue;
+      const max = box.box.scrollMax;
+      if (!((max[0] as number) > 0 || (max[1] as number) > 0)) continue;
+      return { box, hud, point };
+    }
+    return null;
+  };
+
   /** How far the mouse (a finger) must move while held before the drag scrolls the box under it, in the box's pixels: less is a tap. */
   const SCROLL_SLOP = 6;
   /**
@@ -537,9 +561,9 @@ export function createPlayer(backend: Backend, config: PlayerConfig): Player {
    * A drag scrolls the topmost `overflow="scroll"` box it began over that has something to scroll, as a finger scrolls a page:
    * the content follows the pointer, both ways the box overflows, to its ends. A touch is the left button, so a mouse drags
    * it too. A press that a pressable takes as a drag (a slider's thumb, `onDragStart` / `onDrag` / `onDragEnd`) does not scroll,
-   * and once a drag scrolls, the pressable it began on is no longer pressed (its `pressed*` look ends). A press was already
-   * heard as it went down, so a drag that begins on a button presses it and then scrolls: in a list that scrolls, a press on a
-   * row should choose it, and a separate button act on what is chosen.
+   * and once a drag scrolls, the pressable it began on is no longer pressed (its `pressed*` look ends) and never hears the press:
+   * over a box with something to scroll, a press waits for the button to be let go (`dispatchPress`), so a drag that begins on
+   * a row of a list, or on a card whose text scrolls, scrolls it without choosing it.
    */
   const dispatchScrollDrag = (): void => {
     const keys = input.keys[LEFT_BUTTON] as number;
@@ -548,19 +572,10 @@ export function createPlayer(backend: Backend, config: PlayerConfig): Player {
       const held = world.pressed;
       if (scrollers.length === 0 || (held !== null && (draggable(held) || held.onHeldAt !== undefined))) return;
       if (screen !== null && !onScreen(screen, input.screenX, input.screenY)) return;
-      const at = input.worldPoint(input.screenX, input.screenY);
-      const hudAt = input.pointThrough(hudView, input.screenX, input.screenY);
-      for (let i = scrollers.length - 1; i >= 0; i--) {
-        const box = scrollers[i] as Flex;
-        if (box.world !== world || world.isInert(box)) continue;
-        const hud = i >= hudScrollersFrom;
-        const point = hud ? hudAt : at;
-        if (!box.contains(point.x, point.y) || clippedOff(box, point.x, point.y)) continue;
-        const max = box.box.scrollMax;
-        if (!((max[0] as number) > 0 || (max[1] as number) > 0)) continue;
-        grab = { box, hud, x: point.x, y: point.y, fromX: box.scrollX, fromY: box.scrollY, scrolling: false };
-        return;
-      }
+      const under = scrollerAt(input.worldPoint(input.screenX, input.screenY), input.pointThrough(hudView, input.screenX, input.screenY));
+      if (under === null) return;
+      const { box, hud, point } = under;
+      grab = { box, hud, x: point.x, y: point.y, fromX: box.scrollX, fromY: box.scrollY, scrolling: false };
       return;
     }
     if (grab === null) return;
@@ -574,7 +589,7 @@ export function createPlayer(backend: Backend, config: PlayerConfig): Player {
       if (Math.hypot(point.x - grab.x, point.y - grab.y) <= SCROLL_SLOP) return;
       // From here, not from where the press went down: the content does not jump by the slop.
       grab = { ...grab, x: point.x, y: point.y, fromX: box.scrollX, fromY: box.scrollY, scrolling: true };
-      if (world.pressed !== null) world.reportRelease();
+      world.cancelPress();
     }
     const max = box.box.scrollMax;
     const clamp = (v: number, end: number): number => Math.min(Math.max(v, 0), end);

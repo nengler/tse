@@ -249,9 +249,10 @@ pixels, ignores the view and does not nest, so the player does the rest:
 - A drag scrolls the topmost scroll box it began over that overflows, both ways it overflows, once the pointer has moved 6
   pixels (in the box's layer) from the press; from there the content follows the pointer, clamped to its ends. A touch is the
   left button, so this is how a phone scrolls, and a mouse can drag too. A press whose pressable takes drags (`onDragStart`,
-  `onDrag`, `onDragEnd`, a slider's `onHeldAt`) does not scroll. The pressable a scroll began on stops being pressed, so its
-  `pressed*` look ends; its `onPress` was already called as the press went down. A drag does not hand off to an outer box at
-  an end, and there is no flick.
+  `onDrag`, `onDragEnd`, a slider's `onHeldAt`) does not scroll. Over a box with something to scroll, any other press is held
+  back until the button is let go, so a tap there presses on release and a drag that scrolls presses nothing: not a row of the
+  list, nor a card around a text that scrolls. The pressable looks pressed (`pressed*`) while held, until a scroll ends it.
+  Elsewhere a press is heard as it goes down. A drag does not hand off to an outer box at an end, and there is no flick.
 - A scroll box draws a thin bar along each axis it overflows, outside its own clip. When the focus
   moves to something inside a scroll box, it scrolls just enough to show it, once per change.
 
