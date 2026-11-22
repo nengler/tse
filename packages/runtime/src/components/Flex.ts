@@ -16,7 +16,7 @@ export type FlexJustifyContent = (typeof FLEX_JUSTIFY_CONTENT)[number];
 
 /**
  * What happens to children that stick out of a `<Flex>`'s box: `"visible"` (they draw outside it, as ever), `"hidden"` (they are
- * clipped to it) or `"scroll"` (clipped, and the mouse wheel moves them: see `scrollX` and `scrollY`). The manifest's
+ * clipped to it) or `"scroll"` (clipped, and the mouse wheel or a drag moves them: see `scrollX` and `scrollY`). The manifest's
  * `intrinsicLiterals` reads this list.
  */
 export const FLEX_OVERFLOW = ["visible", "hidden", "scroll"] as const;
@@ -124,13 +124,14 @@ export interface FlexProps extends Omit<PressableProps, "onPress">, InputScopePr
   bottom?: number;
   /**
    * What happens to children outside the box (see `FlexOverflow`). `"hidden"` clips to the inside of the box's border (so content never paints over it);
-   * `"scroll"` also lets the mouse wheel move the content, and stops the children shrinking to fit, so there is something to scroll.
+   * `"scroll"` also lets the mouse wheel or a drag (a finger's, or the mouse's) move the content, and stops the children shrinking
+   * to fit, so there is something to scroll. A drag that begins on a box that takes drags itself (a slider, `onDrag`) is that box's.
    * A clipped child cannot be pressed where it is cut off. Give a `"scroll"` box a size (or a `maxHeight`) smaller than its content.
    * Default `"visible"`.
    */
   overflow?: FlexOverflow;
   /**
-   * How far a `"scroll"` box's content is moved left and up, in pixels. The wheel changes it; setting the prop moves it there
+   * How far a `"scroll"` box's content is moved left and up, in pixels. The wheel and a drag change it; setting the prop moves it there
    * (clamped to the content): `scrollY={9999}` keeps a log at its end. Default 0.
    */
   scrollX?: number;

@@ -363,6 +363,84 @@ describe("overflow: the mouse", () => {
     p.close();
   });
 
+  it("scrolls the box a drag began over, the content following the pointer to its ends, once the drag is past a tap", () => {
+    const box = scrollBox();
+    const { p, step } = play(() => box);
+    // The player acts on a step's input at the start of the next, so each is given twice.
+    const held = (y: number): void => {
+      step({ mouse: { x: 5, y }, down: ["MouseLeft"] });
+      step({ mouse: { x: 5, y }, down: ["MouseLeft"] });
+    };
+    step({ mouse: { x: 5, y: 15 } });
+    step({ mouse: { x: 5, y: 15 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    held(11);
+    assert.equal(box.scrollY, 0, "4 pixels is still a tap");
+    held(5);
+    assert.equal(box.scrollY, 0, "past it, the drag scrolls from here: the content does not jump");
+    held(-3);
+    assert.equal(box.scrollY, 8, "up 8, the content up 8");
+    held(1);
+    assert.equal(box.scrollY, 4, "and back with the pointer");
+    held(-60);
+    assert.equal(box.scrollY, 30, "to its end and no further");
+    step({ mouse: { x: 5, y: -60 } });
+    step({ mouse: { x: 5, y: 40 } });
+    assert.equal(box.scrollY, 30, "let go: the pointer moving does not scroll it");
+    step({ mouse: { x: 150, y: 80 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 5, y: 10 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 5, y: 60 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 5, y: 60 }, down: ["MouseLeft"] });
+    assert.equal(box.scrollY, 30, "a drag that began off the box does not scroll it, even over it");
+    p.close();
+  });
+
+  it("scrolls when the drag began on a button in the box, which was pressed as the press went down; not on a box that takes drags", () => {
+    let pressed = 0;
+    const moves: number[] = [];
+    const rows = Array.from({ length: 5 }, () => row(30, 10));
+    const button = flex({ width: 30, height: 10, onPress: () => pressed++, pressedBackground: "red" });
+    const box = flex({ direction: "column", width: 40, height: 20, overflow: "scroll" }, button, ...rows);
+    const { p, step, backend } = play(() => box);
+    const red = (): boolean => JSON.stringify(backend.lastFrame.records).includes("#ff0000");
+    step({ mouse: { x: 5, y: 5 } });
+    step({ mouse: { x: 5, y: 5 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 5, y: 5 }, down: ["MouseLeft"] });
+    assert.equal(red(), true, "held: the button's pressed look");
+    step({ mouse: { x: 5, y: -10 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 5, y: -20 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 5, y: -20 }, down: ["MouseLeft"] });
+    assert.deepEqual([pressed, box.scrollY, red()], [1, 10, false], "pressed once, scrolled, and no longer drawn pressed");
+    p.close();
+
+    const slider = flex({ width: 30, height: 10, onDrag: (_x, y) => moves.push(y) });
+    const list = flex(
+      { direction: "column", width: 40, height: 20, overflow: "scroll" },
+      slider,
+      ...Array.from({ length: 5 }, () => row(30, 10))
+    );
+    const second = play(() => list);
+    second.step({ mouse: { x: 5, y: 5 } });
+    second.step({ mouse: { x: 5, y: 5 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    second.step({ mouse: { x: 5, y: -20 }, down: ["MouseLeft"] });
+    second.step({ mouse: { x: 5, y: -20 } });
+    assert.deepEqual([moves, list.scrollY], [[-20], 0], "the drag is the slider's");
+    second.p.close();
+  });
+
+  it("scrolls a box in a Hud by a drag, along x when that is the way it overflows", () => {
+    const wide = flex({ width: 25, height: 10, overflow: "scroll" }, row(20, 10), row(20, 10));
+    const hud = new Hud();
+    hud.addChild(wide);
+    const { p, step } = play(() => hud);
+    step({ mouse: { x: 20, y: 5 } });
+    step({ mouse: { x: 20, y: 5 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 12, y: 5 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 2, y: 5 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 2, y: 5 }, down: ["MouseLeft"] });
+    assert.deepEqual([wide.scrollX, wide.scrollY], [10, 0]);
+    p.close();
+  });
+
   it("clips a press in a Hud too", () => {
     const log: string[] = [];
     const button = flex({ width: 40, height: 20, onPress: () => log.push("press") });
