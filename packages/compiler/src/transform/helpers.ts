@@ -69,7 +69,10 @@ export const HANDLER_KIND = {
 
 /** Names imported from the authoring module, shared by every component of a file. */
 export interface AuthoringImports {
+  /** What is imported, by the name it has in the authoring module. */
   readonly names: ReadonlySet<string>;
+  /** Runtime functions imported under another name (`textOf as runtimeText`): the local name, and the function's own. */
+  readonly aliases: ReadonlyMap<string, string>;
   /** Names already reported as missing, so each is reported once. */
   readonly reported: Set<string>;
 }

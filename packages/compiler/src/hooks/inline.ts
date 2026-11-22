@@ -67,7 +67,7 @@ import {
 } from "typescript/ast/is";
 
 import { AUTHORING_HOOKS, HOOK_NAME } from "../analyzer/model.ts";
-import { relativeTsImportNames } from "../analyzer/util.ts";
+import { relativeTsImportNames, runtimeAlias } from "../analyzer/util.ts";
 import { DiagnosticCode, error, type CompilerDiagnostic } from "../diagnostics/diagnostics.ts";
 import { spanOf, type ParsedSource, type TsxParser } from "../parser/parser.ts";
 import { applyEdits, EditMap, type Edit } from "./edits.ts";
@@ -217,7 +217,8 @@ export function expandCustomHooks(
                 bodyNames,
                 diagnostics
               );
-              if (hook.fileName !== fileName) collectImports(files, hook, needed);
+              if (hook.fileName !== fileName)
+                collectImports(files, hook, needed, importClashes(files.get(hook.fileName, hook.text), hook.name, sf));
               if (expanded !== null) {
                 edits.push({ start: stmt.getStart(sf), end: stmt.getEnd(), text: expanded });
                 const start = map.toOriginal(stmt.getStart(sf), map.passes, "start");
@@ -901,7 +902,15 @@ function expandCall(
       }
     }
   }
-  const rename = (name: string): string => aliases.get(name) ?? literals.get(name) ?? mutableNames.get(name) ?? `${prefix}${name}`;
+  // A function the hook imports that the calling file has one of its own by that name (`textOf` from a `.ts` file): the hook's
+  // calls go to the hook's, under `runtimeAlias` (see `importClashes`).
+  const clashes = hook.fileName === callFile ? new Map<string, Clash>() : importClashes(sf, hook.name, callSf);
+  const rename = (name: string): string => {
+    const clash = clashes.get(name);
+    if (clash !== undefined) return runtimeAlias(clash.imported);
+    return aliases.get(name) ?? literals.get(name) ?? mutableNames.get(name) ?? `${prefix}${name}`;
+  };
+  const renamedNames = new Set([...declared, ...clashes.keys()]);
 
   const args = call.call.arguments;
   if (args.length > params.length) {
@@ -958,7 +967,7 @@ function expandCall(
       arg !== undefined
         ? `(${callSf.text.slice(arg.getStart(callSf), arg.getEnd())})`
         : p.initializer
-          ? renameIn(p.initializer, sf, hook.text, declared, rename)
+          ? renameIn(p.initializer, sf, hook.text, renamedNames, rename)
           : null;
     if (valueText === null) {
       diagnostics.push(
@@ -968,7 +977,7 @@ function expandCall(
     }
     if (!literals.has((p.name as { text: string }).text)) lines.push(`const ${rename((p.name as { text: string }).text)} = ${valueText};`);
   }
-  for (const s of kept) lines.push(renameIn(s, sf, hook.text, declared, rename));
+  for (const s of kept) lines.push(renameIn(s, sf, hook.text, renamedNames, rename));
 
   if (call.binding.kind !== "none") {
     const expr = returnStatement !== null && isReturnStatement(returnStatement) ? returnStatement.expression : undefined;
@@ -976,7 +985,7 @@ function expandCall(
       diagnostics.push(error(DiagnosticCode.UnsupportedSyntax, `The hook '${hook.name}' returns nothing, but its result is used.`, at));
       return null;
     }
-    const renamed = (n: Node): string => renameIn(n, sf, hook.text, declared, rename);
+    const renamed = (n: Node): string => renameIn(n, sf, hook.text, renamedNames, rename);
     if (call.binding.kind === "name") {
       if (!(isIdentifier(expr) && aliases.get(expr.text) === call.binding.name))
         lines.push(`${call.binding.keyword} ${call.binding.name} = ${renamed(expr)};`);
@@ -1040,7 +1049,7 @@ function expandCall(
         const value = expr.elements[i];
         if (target.name === undefined || value === undefined) continue;
         if (isIdentifier(value) && aliases.get(value.text) === target.name.text) continue; // renamed in place
-        lines.push(`${call.binding.keyword} ${target.name.text} = ${renameIn(value, sf, hook.text, declared, rename)};`);
+        lines.push(`${call.binding.keyword} ${target.name.text} = ${renameIn(value, sf, hook.text, renamedNames, rename)};`);
       }
     }
   }
@@ -1084,17 +1093,68 @@ function isNotAReference(id: Node, parent: Node | null): boolean {
   return false;
 }
 
-/** The names a hook's file imports from non-relative modules, by module. */
-function collectImports(files: HookFiles, hook: Hook, into: Map<string, Set<string>>): void {
+/**
+ * The names a hook's file imports from non-relative modules, by module. One the calling file has its own of (`clashes`) is
+ * imported under `runtimeAlias` (`textOf as $runtime_textOf`), the name the inlined hook calls it by.
+ */
+function collectImports(files: HookFiles, hook: Hook, into: Map<string, Set<string>>, clashes: ReadonlyMap<string, Clash>): void {
   for (const statement of files.get(hook.fileName, hook.text).statements) {
     if (!isImportDeclaration(statement) || !isStringLiteral(statement.moduleSpecifier) || /^\.\.?\//.test(statement.moduleSpecifier.text))
       continue;
     const bindings = statement.importClause?.namedBindings;
     if (!bindings || !isNamedImports(bindings)) continue;
     const set = into.get(statement.moduleSpecifier.text) ?? new Set<string>();
-    for (const element of bindings.elements) if (!element.isTypeOnly) set.add(element.name.text);
+    for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
+      const clash = clashes.get(element.name.text);
+      set.add(clash === undefined ? element.name.text : `${clash.imported} as ${runtimeAlias(clash.imported)}`);
+    }
     into.set(statement.moduleSpecifier.text, set);
   }
+}
+
+/** A name a hook imports from a non-relative module that the calling file binds to something else: what the hook imports it as. */
+interface Clash {
+  readonly module: string;
+  readonly imported: string;
+}
+
+/**
+ * The names the hook `hookName` (declared in `hookSf`) uses from its file's non-relative imports, where the calling file binds the
+ * same name to something else: an import from another module (`import { textOf } from "./cards.ts"`) or its own top-level
+ * declaration. Inlined as they are, the hook's calls would reach the caller's function.
+ */
+function importClashes(hookSf: SourceFile, hookName: string, callSf: SourceFile): Map<string, Clash> {
+  const clashes = new Map<string, Clash>();
+  const declaration = hookSf.statements.find((s): s is FunctionDeclaration => isFunctionDeclaration(s) && s.name?.text === hookName);
+  if (declaration?.body === undefined) return clashes;
+  const used = new Set(declaration.body.getText(hookSf).match(/[A-Za-z_$][\w$]*/g));
+  // What each name means in the calling file: the module it is imported from, or "" for its own declaration.
+  const bound = new Map<string, string>();
+  for (const statement of callSf.statements) {
+    if (isImportDeclaration(statement) && isStringLiteral(statement.moduleSpecifier)) {
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && isNamedImports(bindings))
+        for (const element of bindings.elements) bound.set(element.name.text, statement.moduleSpecifier.text);
+      if (statement.importClause?.name) bound.set(statement.importClause.name.text, statement.moduleSpecifier.text);
+    } else if (isFunctionDeclaration(statement) && statement.name !== undefined) bound.set(statement.name.text, "");
+    else if (isVariableStatement(statement)) {
+      for (const d of statement.declarationList.declarations) if (isIdentifier(d.name)) bound.set(d.name.text, "");
+    }
+  }
+  for (const statement of hookSf.statements) {
+    if (!isImportDeclaration(statement) || !isStringLiteral(statement.moduleSpecifier) || /^\.\.?\//.test(statement.moduleSpecifier.text))
+      continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      const local = element.name.text;
+      const there = bound.get(local);
+      if (element.isTypeOnly || !used.has(local) || there === undefined || there === statement.moduleSpecifier.text) continue;
+      clashes.set(local, { module: statement.moduleSpecifier.text, imported: element.propertyName?.getText(hookSf) ?? local });
+    }
+  }
+  return clashes;
 }
 
 /** Add to the file the imports its inlined hooks need and it lacks, on its first line (so no line moves). */
@@ -1108,7 +1168,8 @@ function importEdits(sf: SourceFile, needed: ReadonlyMap<string, ReadonlySet<str
   }
   const lines: string[] = [];
   for (const [specifier, names] of needed) {
-    const missing = [...names].filter((n) => !have.has(n));
+    // `textOf as $runtime_textOf` is had when its alias is.
+    const missing = [...names].filter((n) => !have.has(n.split(" as ").at(-1)!));
     if (missing.length > 0) lines.push(`import { ${missing.join(", ")} } from ${JSON.stringify(specifier)};`);
   }
   return lines.length === 0 ? [] : [{ start: 0, end: 0, text: `${lines.join(" ")} ` }];

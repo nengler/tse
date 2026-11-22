@@ -798,9 +798,15 @@ export class ExpressionLowering extends LoweringBase {
       !this.plainImports.has(callee.text)
     ) {
       result = { callee: { kind: "Function", name: callee.text }, expected: GLOBAL_FUNCTIONS[callee.text]!, label: callee.text };
-    } else if (isIdentifier(callee) && this.manifest.functions[callee.text] !== undefined && !this.scope.has(callee.text)) {
-      this.requireImport(callee.text, callee);
-      result = { callee: { kind: "Function", name: callee.text }, expected: this.manifest.functions[callee.text]!, label: callee.text };
+    } else if (
+      isIdentifier(callee) &&
+      !this.scope.has(callee.text) &&
+      this.manifest.functions[this.authoring.aliases.get(callee.text) ?? callee.text] !== undefined
+    ) {
+      // A runtime function, by its own name or the one it was imported under (`textOf as runtimeText`): the IR names it by its own.
+      const name = this.authoring.aliases.get(callee.text) ?? callee.text;
+      this.requireImport(name, callee);
+      result = { callee: { kind: "Function", name }, expected: this.manifest.functions[name]!, label: callee.text };
     } else if (isPropertyAccessExpression(callee) && !this.handleParam(callee.expression)) {
       return this.lowerArrayMethod(node, callee);
     } else if (isPropertyAccessExpression(callee)) {

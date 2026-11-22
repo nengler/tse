@@ -85,7 +85,16 @@ export function buildModuleIR(analysis: SourceAnalysis, options: TransformOption
   ]);
   const authoredTypes = new Set(AUTHORING_TYPES);
   for (const i of analysis.authoringImports) {
-    if (i.isTypeOnly && !authoredTypes.has(i.name)) {
+    if (i.importedName !== undefined && !i.isTypeOnly && manifest.functions[i.importedName] === undefined) {
+      // Only a runtime function may be renamed: hooks and built-in elements are recognised by their own names.
+      diagnostics.push(
+        error(
+          DiagnosticCode.UnsupportedSyntax,
+          `Only a runtime function may be renamed when imported from "${manifest.authoringModule}" (\`textOf as runtimeText\`): import '${i.importedName}' as it is.`,
+          span(i.node)
+        )
+      );
+    } else if (i.isTypeOnly && !authoredTypes.has(i.name)) {
       diagnostics.push(
         error(
           DiagnosticCode.UnknownImport,
@@ -106,11 +115,11 @@ export function buildModuleIR(analysis: SourceAnalysis, options: TransformOption
       // import with no call says it here.
       const called = new RegExp(`\\b${i.name}\\s*[<(]`).test(analysis.sourceFile.text.slice(i.node.getEnd()));
       if (!called) diagnostics.push(error(DiagnosticCode.UnknownImport, REMOVED_HOOKS[i.name]!, span(i.node)));
-    } else if (!i.isTypeOnly && !authored.has(i.name)) {
+    } else if (!i.isTypeOnly && !authored.has(i.importedName ?? i.name)) {
       diagnostics.push(
         error(
           DiagnosticCode.UnknownImport,
-          `'${i.name}' is not exported by "${manifest.authoringModule}". It exports: ${[...authored].sort().join(", ")}.`,
+          `'${i.importedName ?? i.name}' is not exported by "${manifest.authoringModule}". It exports: ${[...authored].sort().join(", ")}.`,
           span(i.node)
         )
       );
@@ -119,7 +128,12 @@ export function buildModuleIR(analysis: SourceAnalysis, options: TransformOption
 
   // Hooks, built-in elements and runtime functions must be imported, as in React. Each missing name is reported once per file.
   const authoring: AuthoringImports = {
-    names: new Set(analysis.authoringImports.filter((i) => !i.isTypeOnly).map((i) => i.name)),
+    names: new Set(analysis.authoringImports.filter((i) => !i.isTypeOnly).map((i) => i.importedName ?? i.name)),
+    aliases: new Map(
+      analysis.authoringImports
+        .filter((i) => !i.isTypeOnly && i.importedName !== undefined && manifest.functions[i.importedName] !== undefined)
+        .map((i) => [i.name, i.importedName!] as const)
+    ),
     reported: new Set(),
   };
 
@@ -193,6 +207,9 @@ export function buildModuleIR(analysis: SourceAnalysis, options: TransformOption
       components,
       plainImports,
       moduleDeclarations,
+      ...(authoring.aliases.size > 0
+        ? { runtimeAliases: [...authoring.aliases].map(([name, importedName]) => ({ name, importedName })) }
+        : {}),
       typeImports: analysis.typeImports.map((i) => ({
         name: i.name,
         module: i.module,

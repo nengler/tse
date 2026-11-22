@@ -124,6 +124,8 @@ export function analyzeSourceFile(
           "Imports from the authoring module",
           `import { useMutable, Entity, type Child } from "${specifier}"`,
           false,
+          true,
+          // A runtime function may be renamed (`textOf as runtimeText`); the transform says so for anything else.
           true
         );
       } else {
