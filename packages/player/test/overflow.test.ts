@@ -394,7 +394,7 @@ describe("overflow: the mouse", () => {
     p.close();
   });
 
-  it("scrolls when the drag began on a button in the box, which was pressed as the press went down; not on a box that takes drags", () => {
+  it("scrolls when the drag began on a button in the box, which looks pressed but never hears the press; not on a box that takes drags", () => {
     let pressed = 0;
     const moves: number[] = [];
     const rows = Array.from({ length: 5 }, () => row(30, 10));
@@ -409,7 +409,10 @@ describe("overflow: the mouse", () => {
     step({ mouse: { x: 5, y: -10 }, down: ["MouseLeft"] });
     step({ mouse: { x: 5, y: -20 }, down: ["MouseLeft"] });
     step({ mouse: { x: 5, y: -20 }, down: ["MouseLeft"] });
-    assert.deepEqual([pressed, box.scrollY, red()], [1, 10, false], "pressed once, scrolled, and no longer drawn pressed");
+    assert.deepEqual([pressed, box.scrollY, red()], [0, 10, false], "scrolled, not pressed, and no longer drawn pressed");
+    step({ mouse: { x: 5, y: -20 } });
+    step({ mouse: { x: 5, y: -20 } });
+    assert.equal(pressed, 0, "nor when it is let go");
     p.close();
 
     const slider = flex({ width: 30, height: 10, onDrag: (_x, y) => moves.push(y) });
@@ -425,6 +428,59 @@ describe("overflow: the mouse", () => {
     second.step({ mouse: { x: 5, y: -20 } });
     assert.deepEqual([moves, list.scrollY], [[-20], 0], "the drag is the slider's");
     second.p.close();
+  });
+
+  it("over a box with something to scroll, a tap presses on release; a drag that scrolls presses nothing, the box it is in included", () => {
+    const log: string[] = [];
+    const button = flex({ width: 30, height: 10, onPress: () => log.push("button") });
+    const text = flex(
+      { direction: "column", width: 40, height: 20, overflow: "scroll" },
+      button,
+      ...Array.from({ length: 5 }, () => row(30, 10))
+    );
+    // A card that is pressed to choose it, with text in it that scrolls: as a pick's card in a game.
+    const card = flex({ direction: "column", width: 60, height: 60, onPress: () => log.push("card") }, text);
+    const { p, step } = play(() => card);
+    step({ mouse: { x: 5, y: 5 } });
+    step({ mouse: { x: 5, y: 5 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 6, y: 7 }, down: ["MouseLeft"] });
+    assert.deepEqual(log, [], "held, and not yet a scroll: nothing heard");
+    step({ mouse: { x: 6, y: 7 } });
+    step({ mouse: { x: 6, y: 7 } });
+    assert.deepEqual(log, ["button"], "let go within a tap: the press");
+
+    log.length = 0;
+    step({ mouse: { x: 50, y: 40 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 50, y: 40 } });
+    assert.deepEqual(log, ["card"], "on the card off its text: heard as it goes down");
+
+    log.length = 0;
+    step({ mouse: { x: 35, y: 15 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 35, y: 5 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 35, y: -5 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 35, y: -5 }, down: ["MouseLeft"] });
+    step({ mouse: { x: 35, y: -5 } });
+    step({ mouse: { x: 35, y: -5 } });
+    assert.deepEqual([log, text.scrollY], [[], 10], "a drag on the card's text scrolls it, and the card hears nothing");
+
+    log.length = 0;
+    step({ mouse: { x: 35, y: 15 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 35, y: 15 } });
+    step({ mouse: { x: 35, y: 15 } });
+    assert.deepEqual(log, ["card"], "a tap on the card's text chooses the card");
+    p.close();
+  });
+
+  it("presses at once over a scroll box with nothing to scroll", () => {
+    let pressed = 0;
+    const button = flex({ width: 30, height: 10, onPress: () => pressed++ });
+    const box = flex({ direction: "column", width: 40, height: 40, overflow: "scroll" }, button);
+    const { p, step } = play(() => box);
+    step({ mouse: { x: 5, y: 5 } });
+    step({ mouse: { x: 5, y: 5 }, pressed: ["MouseLeft"], down: ["MouseLeft"] });
+    step({ mouse: { x: 5, y: 5 }, down: ["MouseLeft"] });
+    assert.equal(pressed, 1);
+    p.close();
   });
 
   it("scrolls a box in a Hud by a drag, along x when that is the way it overflows", () => {

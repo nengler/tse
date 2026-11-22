@@ -208,19 +208,30 @@ export class World implements BodySpace, BallSpace {
    * point is inside its area and it is mounted in this world. Returns whether it
    * was hit. Dispatch only: renders happen in the next `tick`. Which pointer
    * to test (and in what order, for overlaps) is the input system's job.
+   *
+   * `held` keeps `onPressAt` and `onPress` back until the button is let go (`reportRelease`), and drops them if the drag
+   * scrolls a box instead (`cancelPress`): the player holds back a press that lands over a scroll box, so a drag that
+   * scrolls it does not also press what it began on. The pressable is pressed (its `pressed*` look) from the start.
    */
-  reportPress(pointer: Pressable, x: number, y: number): boolean {
+  reportPress(pointer: Pressable, x: number, y: number, held = false): boolean {
     if (pointer.world !== this || !pointer.contains(x, y)) return false;
     if (this.#hasInert() && this.isInert(pointer as unknown as GameObject)) return false;
     // A disabled one is hit, so what is under it does not get the press, but it hears nothing and takes no focus.
     if (pointer.disabled === true) return true;
     if (pointer.focusable === true) this.focus(pointer);
     this.#pressed = pointer;
+    if (held) {
+      this.#heldPress = { pointer, x, y };
+      return true;
+    }
     pointer.onPressAt?.(x, y);
     pointer.onPress?.();
     pointer.onDragStart?.(x, y);
     return true;
   }
+
+  /** A press held back until the button is let go (`reportPress` with `held`), and where it landed; null for none. */
+  #heldPress: { pointer: Pressable; x: number; y: number } | null = null;
 
   /**
    * A left press landed on `target` (null: on nothing). Every mounted pressable with an `onPressOutside` hears it, unless the
@@ -245,9 +256,26 @@ export class World implements BodySpace, BallSpace {
     return this.#pressed;
   }
 
-  /** The mouse button is up: nothing is pressed any more. The player calls it every step the button is not held. */
+  /**
+   * The mouse button is up: nothing is pressed any more. The player calls it every step the button is not held. A press held
+   * back (`reportPress` with `held`) is heard now, by a pressable that is still in this world, enabled and not inert.
+   */
   reportRelease(): void {
     this.#pressed = null;
+    const held = this.#heldPress;
+    if (held === null) return;
+    this.#heldPress = null;
+    const { pointer } = held;
+    if (pointer.world !== this || pointer.disabled === true) return;
+    if (this.#hasInert() && this.isInert(pointer as unknown as GameObject)) return;
+    pointer.onPressAt?.(held.x, held.y);
+    pointer.onPress?.();
+  }
+
+  /** A drag took the held press to scroll a box: nothing is pressed any more, and a press held back is never heard. */
+  cancelPress(): void {
+    this.#pressed = null;
+    this.#heldPress = null;
   }
 
   #hovered: Pressable | null = null;
@@ -770,6 +798,7 @@ export class World implements BodySpace, BallSpace {
     this.#pressables.delete(object as GameObject & Pressable);
     if (this.#focused === object) this.#focused = null;
     if (this.#pressed === (object as unknown as Pressable)) this.#pressed = null;
+    if (this.#heldPress?.pointer === (object as unknown as Pressable)) this.#heldPress = null;
     this.#onInput.delete(object);
     this.#onUpdate.delete(object);
     object.worldHandlers = 0;

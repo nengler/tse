@@ -126,6 +126,7 @@ export interface FlexProps extends Omit<PressableProps, "onPress">, InputScopePr
    * What happens to children outside the box (see `FlexOverflow`). `"hidden"` clips to the inside of the box's border (so content never paints over it);
    * `"scroll"` also lets the mouse wheel or a drag (a finger's, or the mouse's) move the content, and stops the children shrinking
    * to fit, so there is something to scroll. A drag that begins on a box that takes drags itself (a slider, `onDrag`) is that box's.
+   * Over a box with something to scroll, a press (`onPress`) is heard when the button is let go, and not if the drag scrolled.
    * A clipped child cannot be pressed where it is cut off. Give a `"scroll"` box a size (or a `maxHeight`) smaller than its content.
    * Default `"visible"`.
    */
