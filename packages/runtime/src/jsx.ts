@@ -435,7 +435,7 @@ export function AnimatedSprite(_props: AnimatedSpriteProps & TransformShorthand)
  * `wrap` breaks a row into lines (with `rowGap` and `columnGap`).
  * `opacity` fades the box and everything in it (with a `transition`, over time).
  * `backgroundImage` and `slice` skin it with a nine-slice picture (and `hoverBackgroundImage` and the like swap it by state).
- * `overflow` clips children that stick out of the box (`"hidden"`) and lets the mouse wheel scroll them (`"scroll"`, with `scrollX` / `scrollY`).
+ * `overflow` clips children that stick out of the box (`"hidden"`) and lets the mouse wheel or a drag scroll them (`"scroll"`, with `scrollX` / `scrollY`).
  */
 export function Flex(_props: FlexProps & { children?: Child } & TransformShorthand): JSX.Element {
   return compileTimeOnly("Flex");

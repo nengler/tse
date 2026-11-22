@@ -232,7 +232,7 @@ that need a second sizing pass.
 
 ## Clipping and scrolling
 
-`overflow="hidden"` clips to the box; `"scroll"` also scrolls with the wheel. This uses ABI v2's scissor record, which is in target
+`overflow="hidden"` clips to the box; `"scroll"` also scrolls with the wheel and with a drag. This uses ABI v2's scissor record, which is in target
 pixels, ignores the view and does not nest, so the player does the rest:
 
 - A clip is a property of a draw record, like its z. The walk tags each record with its innermost clipping box. After the z
@@ -246,6 +246,12 @@ pixels, ignores the view and does not nest, so the player does the rest:
 - A press or hover inside a clipping box must also be inside every box that clips it. The wheel goes to the topmost
   scroll box under the mouse that can still move that way (vertical first), and a box at its end passes it on. A notch is 32
   pixels.
+- A drag scrolls the topmost scroll box it began over that overflows, both ways it overflows, once the pointer has moved 6
+  pixels (in the box's layer) from the press; from there the content follows the pointer, clamped to its ends. A touch is the
+  left button, so this is how a phone scrolls, and a mouse can drag too. A press whose pressable takes drags (`onDragStart`,
+  `onDrag`, `onDragEnd`, a slider's `onHeldAt`) does not scroll. The pressable a scroll began on stops being pressed, so its
+  `pressed*` look ends; its `onPress` was already called as the press went down. A drag does not hand off to an outer box at
+  an end, and there is no flick.
 - A scroll box draws a thin bar along each axis it overflows, outside its own clip. When the focus
   moves to something inside a scroll box, it scrolls just enough to show it, once per change.
 
@@ -338,7 +344,8 @@ none), and Alt + Enter always (`tse_set_fullscreen`, a borderless window at the 
 | Aspect-ratio boxes | A portrait or minimap frame that keeps its shape while growing |
 | Layout transitions (size and position animated) | A menu that should slide or resize smoothly; `transform` can be animated today |
 | Wrapping columns, `align-content`, per-line growing, a `Grid` | A layout a wrapping row of fixed-size children cannot express |
-| Dragging a scroll bar or the content; Shift + wheel for the other axis | A long list on a mouse without a horizontal wheel |
+| Dragging a scroll bar; Shift + wheel for the other axis | A long list on a mouse without a horizontal wheel |
+| A flick that keeps a dragged scroll box going, and a drag that hands off to the box around it at an end | A long list on a phone that is slow to get through |
 | Tiled (not stretched) nine-slice edges, a corner scale, a tint | A skin that does not stretch well |
 | Vertical or two-thumb sliders, wheel adjusting | A settings menu that needs them |
 | A sharp HUD over a pixel-perfect world (`<Hud pixelPerfect={false}>`) | Small text in a pixel-art HUD that is hard to read |

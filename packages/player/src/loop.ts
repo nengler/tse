@@ -525,6 +525,63 @@ export function createPlayer(backend: Backend, config: PlayerConfig): Player {
     }
   };
 
+  /** How far the mouse (a finger) must move while held before the drag scrolls the box under it, in the box's pixels: less is a tap. */
+  const SCROLL_SLOP = 6;
+  /**
+   * The scroll box a held press began over, and where: the pointer then (in its layer's coordinates) and how far the box was
+   * scrolled. `scrolling` once the drag has gone past `SCROLL_SLOP`, from where it was at that moment. Null for none.
+   */
+  let grab: { box: Flex; hud: boolean; x: number; y: number; fromX: number; fromY: number; scrolling: boolean } | null = null;
+
+  /**
+   * A drag scrolls the topmost `overflow="scroll"` box it began over that has something to scroll, as a finger scrolls a page:
+   * the content follows the pointer, both ways the box overflows, to its ends. A touch is the left button, so a mouse drags
+   * it too. A press that a pressable takes as a drag (a slider's thumb, `onDragStart` / `onDrag` / `onDragEnd`) does not scroll,
+   * and once a drag scrolls, the pressable it began on is no longer pressed (its `pressed*` look ends). A press was already
+   * heard as it went down, so a drag that begins on a button presses it and then scrolls: in a list that scrolls, a press on a
+   * row should choose it, and a separate button act on what is chosen.
+   */
+  const dispatchScrollDrag = (): void => {
+    const keys = input.keys[LEFT_BUTTON] as number;
+    if ((keys & TSE_KEY_PRESSED) !== 0) {
+      grab = null;
+      const held = world.pressed;
+      if (scrollers.length === 0 || (held !== null && (draggable(held) || held.onHeldAt !== undefined))) return;
+      if (screen !== null && !onScreen(screen, input.screenX, input.screenY)) return;
+      const at = input.worldPoint(input.screenX, input.screenY);
+      const hudAt = input.pointThrough(hudView, input.screenX, input.screenY);
+      for (let i = scrollers.length - 1; i >= 0; i--) {
+        const box = scrollers[i] as Flex;
+        if (box.world !== world || world.isInert(box)) continue;
+        const hud = i >= hudScrollersFrom;
+        const point = hud ? hudAt : at;
+        if (!box.contains(point.x, point.y) || clippedOff(box, point.x, point.y)) continue;
+        const max = box.box.scrollMax;
+        if (!((max[0] as number) > 0 || (max[1] as number) > 0)) continue;
+        grab = { box, hud, x: point.x, y: point.y, fromX: box.scrollX, fromY: box.scrollY, scrolling: false };
+        return;
+      }
+      return;
+    }
+    if (grab === null) return;
+    const { box } = grab;
+    if ((keys & TSE_KEY_DOWN) === 0 || box.world !== world) {
+      grab = null;
+      return;
+    }
+    const point = grab.hud ? input.pointThrough(hudView, input.screenX, input.screenY) : input.worldPoint(input.screenX, input.screenY);
+    if (!grab.scrolling) {
+      if (Math.hypot(point.x - grab.x, point.y - grab.y) <= SCROLL_SLOP) return;
+      // From here, not from where the press went down: the content does not jump by the slop.
+      grab = { ...grab, x: point.x, y: point.y, fromX: box.scrollX, fromY: box.scrollY, scrolling: true };
+      if (world.pressed !== null) world.reportRelease();
+    }
+    const max = box.box.scrollMax;
+    const clamp = (v: number, end: number): number => Math.min(Math.max(v, 0), end);
+    if ((max[0] as number) > 0) box.scrollX = clamp(grab.fromX - (point.x - grab.x), max[0] as number);
+    if ((max[1] as number) > 0) box.scrollY = clamp(grab.fromY - (point.y - grab.y), max[1] as number);
+  };
+
   /**
    * A press that is still held keeps telling the pressable it began on where the mouse is, wherever the mouse has gone: a slider's
    * thumb follows it out of the box (`onHeldAt`, every step), and a drag hears each move (`onDrag`, when the mouse is somewhere new).
@@ -729,6 +786,7 @@ export function createPlayer(backend: Backend, config: PlayerConfig): Player {
     if (realDt > 0) smoothDt = smoothDt === 0 ? realDt : smoothDt * 0.9 + realDt * 0.1;
     dispatchPress();
     dispatchDrag();
+    dispatchScrollDrag();
     dispatchHover();
     dispatchWheel();
     // `<Game timeScale paused>` are read every frame: they may be state.
