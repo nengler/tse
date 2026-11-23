@@ -170,7 +170,13 @@ ignored):
   (`TSE9002`; `--no-check` skips it). Imports are mandatory, as in React: a
   hook, built-in element or runtime function used without being imported is
   `TSE1005` (reported once per name per file, naming the import line to
-  add). `Math` is a global and needs none.
+  add). `Math` is a global and needs none. A runtime function may be imported
+  under another name (`import { clamp as limit }`); a hook or built-in element
+  may not (`TSE1001`). A game's own function named like a runtime function (a
+  `textOf` from a `.ts` file, or declared in the file) is the one the file's
+  code calls; what the compiler adds itself (`textOf` around a `<Text>`'s text)
+  and what an inlined hook calls still reach the runtime's, which the generated
+  module then imports as `$runtime_textOf`.
 * Position is state: `x={…} y={0} rotation={…}` on any built-in
   element (`<Entity>`, `<Sprite>`, `<Collider>`, `<Text>`, `<Shape>`, `<Camera>`,
   `<AnimatedSprite>`, `<Pointer>`; the root or a child),
@@ -2239,7 +2245,7 @@ export function Player() { usePlatformerBody(); … }
 - **Names.** What the hook declares at its top level (its `const`s, its parameters) is given a prefix unique to the call, `_useName3_x`, so two calls make two separate states and nothing clashes with the component's own names. The exception is a hook's own `useMutable` (`const b = useMutable(…)`), named after the hook, `useBody` → `body`, so its state is saved as `Comp.body.x`; a second call, or a name the component already uses, numbers it (`body2`), and a hook named for a keyword (`useDefault`) keeps the prefix. A mutable the hook returns (`return s`) takes the caller's name. Properties, keys and JSX attribute names are left alone; `{ x }` becomes `{ x: _useName3_x }`.
 - **Parameters.** A literal argument (a string, number or boolean) is written into the hook where the parameter is used, so a parameter can be a `useSound` path; any other argument is bound with `const _useName3_p = (argument);`. A missing argument takes the parameter's default. A destructured parameter is a diagnostic.
 - **Results.** `const v = useX()`, `const { a, b } = useX()` (the hook returns an object literal) and `const [a, b] = useX()` (an array literal) become `const` declarations of the returned expressions. A name the hook declares and returns as it is (`return s`, `return [count, step]`) is not copied: the hook's own declaration takes the caller's name, so a hook can hand back its `useMutable` for the caller to read and write (decided 2026-11-11, for setters then). Anything else returned is a value (a state-derived expression).
-- **Where.** In the component's file, or imported from a relative `.tsx` (`import { useClock } from "./hooks.tsx"`, read by the CLI; the hook's imports from the authoring module are added to the file that uses it). Hooks may call hooks, to a depth of six, which also stops recursion. A call anywhere but as a statement of the component body (in a condition, a callback, an expression) is `TSE1101` with the hook's name.
+- **Where.** In the component's file, or imported from a relative `.tsx` (`import { useClock } from "./hooks.tsx"`, read by the CLI; the hook's imports from the authoring module are added to the file that uses it; one the file has its own of, a `getInputDevice` from a `.ts` file, is added as `getInputDevice as $runtime_getInputDevice`, and the inlined hook calls it by that name). Hooks may call hooks, to a depth of six, which also stops recursion. A call anywhere but as a statement of the component body (in a condition, a callback, an expression) is `TSE1101` with the hook's name.
 - **What is left.** After expansion the hook's declaration and its import are removed, so a hooks-only file compiles to an empty module. Positions in later diagnostics are those of the expanded text. An unknown `use…` name is left alone, so the retired hooks keep their messages.
 
 The author's editor still sees ordinary typed functions: the file type-checks as written (the hook calls `useMutable` and friends, which throw only if run).

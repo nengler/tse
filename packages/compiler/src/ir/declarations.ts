@@ -24,6 +24,11 @@ export interface IRModule {
    * copied into the generated module as written, before the components, which read them as they read a plain import.
    */
   readonly moduleDeclarations: readonly ModuleDeclarationIR[];
+  /**
+   * Runtime functions the file imports under another name (`import { textOf as runtimeText }`): what a top-level helper copied into
+   * the generated module calls them by, so it imports them the same way. Calls in components are written by the function's own name.
+   */
+  readonly runtimeAliases?: readonly { readonly name: string; readonly importedName: string }[];
   /** Types imported from relative `.ts` files: the generated module imports them as types, from where they are. */
   readonly typeImports: readonly { readonly name: string; readonly importedName?: string; readonly module: string }[];
 }

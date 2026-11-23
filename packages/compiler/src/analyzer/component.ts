@@ -83,7 +83,8 @@ export function analyzeNamedImport(
   what: string,
   example: string,
   allowDefault = false,
-  allowTypeSpecifiers = false
+  allowTypeSpecifiers = false,
+  allowValueAliases = false
 ): void {
   const clause = statement.importClause;
   const bindings = clause?.namedBindings;
@@ -135,7 +136,7 @@ export function analyzeNamedImport(
       // A type may be renamed (`type Tower as TowerData`): the generated module imports it the same way.
       if (
         (element.isTypeOnly && !allowTypeSpecifiers) ||
-        (element.propertyName && !(typeOnly && allowTypeSpecifiers && module.endsWith(".ts")))
+        (element.propertyName && !allowValueAliases && !(typeOnly && allowTypeSpecifiers && module.endsWith(".ts")))
       ) {
         diagnostics.push(
           error(

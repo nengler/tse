@@ -6,6 +6,14 @@ import { isImportDeclaration, isNamedImports, isParenthesizedExpression, isStrin
 export const RELATIVE_TS = /^\.\.?\/.*\.ts$/;
 
 /**
+ * The name a runtime function goes by where the game already uses its own name for something else (`textOf` from a `.ts` file):
+ * the generated module imports it as `textOf as $runtime_textOf`, and an inlined hook calls it by that name.
+ */
+export function runtimeAlias(name: string): string {
+  return `$runtime_${name}`;
+}
+
+/**
  * The local names a file's named imports from relative `.ts` modules bind. The game state's store (`useGame`) is among them:
  * it looks like a hook and is not one, so it is known before any component body is read (imports may follow the components).
  */

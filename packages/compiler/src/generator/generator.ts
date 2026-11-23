@@ -1,3 +1,4 @@
+import { runtimeAlias } from "../analyzer/util.ts";
 import {
   assertNever,
   type ChildIR,
@@ -102,8 +103,19 @@ function writeModule(module: IRModule, options: GeneratorOptions): CodeWriter {
       if (options.runtimeFunctions.has(name) && !imports.includes(name)) imports.push(name);
     }
   }
+  // A runtime function whose name the file uses for something of its own (a function from a `.ts` file, a top-level helper) is
+  // imported under `runtimeAlias`, and the components call it by that name: the compiler adds calls of its own (`textOf` around
+  // the text of a `<Text>`), and an inlined hook calls the functions it imports.
+  const own = new Set([...module.plainImports.map((i) => i.name), ...module.moduleDeclarations.map((d) => d.name)]);
+  const renamed = new Set(imports.filter((name) => options.runtimeFunctions.has(name) && own.has(name)));
+  // What a top-level helper calls a runtime function by, when the file imported it under another name.
+  for (const alias of module.runtimeAliases ?? []) {
+    if (module.moduleDeclarations.some((d) => d.reads.includes(alias.name)) && !imports.includes(`${alias.importedName} as ${alias.name}`))
+      imports.push(`${alias.importedName} as ${alias.name}`);
+  }
   if (imports.length > 0) {
-    w.line(`import { ${imports.join(", ")} } from ${JSON.stringify(options.runtimeModule)};`);
+    const specifiers = imports.map((name) => (renamed.has(name) ? `${name} as ${runtimeAlias(name)}` : name));
+    w.line(`import { ${specifiers.join(", ")} } from ${JSON.stringify(options.runtimeModule)};`);
   }
   if (options.tilemapsModule !== undefined && imports.includes("Tilemap")) w.line(`import ${JSON.stringify(options.tilemapsModule)};`);
   if (usage.store) {
@@ -142,7 +154,8 @@ function writeModule(module: IRModule, options: GeneratorOptions): CodeWriter {
         w,
         options.requiredHostProps,
         options.intrinsicHooks,
-        options.gameState?.name ?? ""
+        options.gameState?.name ?? "",
+        renamed
       );
       generator.emit();
       usesAssume ||= generator.usesAssume;

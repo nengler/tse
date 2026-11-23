@@ -1,3 +1,4 @@
+import { runtimeAlias } from "../analyzer/util.ts";
 // Base of the component generator: the fields, the expression and field-reference emitters. Layer 0 of ComponentGenerator (see generator.ts).
 import {
   assertNever,
@@ -108,15 +109,19 @@ export class ExpressionEmitter {
   protected renderTemps = 0;
   /** The imported game state (`useGame`), when the module uses one. */
   protected readonly storeName: string;
+  /** Runtime functions the module imports under `runtimeAlias`, because the file has its own of that name: called by the alias. */
+  protected readonly runtimeRenamed: ReadonlySet<string>;
 
   constructor(
     component: ComponentIR,
     writer: CodeWriter,
     requiredHostProps: Readonly<Record<string, readonly string[]>>,
     intrinsicHooks: Readonly<Record<string, readonly string[]>>,
-    storeName: string
+    storeName: string,
+    runtimeRenamed: ReadonlySet<string> = new Set()
   ) {
     this.storeName = storeName;
+    this.runtimeRenamed = runtimeRenamed;
     this.requiredHostProps = requiredHostProps;
     this.intrinsicHooks = intrinsicHooks;
     this.c = component;
@@ -316,7 +321,7 @@ export class ExpressionEmitter {
         const args = e.args.map((a) => this.expr(a, true)).join(", ");
         switch (e.callee.kind) {
           case "Function":
-            return `${e.callee.name}(${args})`;
+            return `${this.runtimeRenamed.has(e.callee.name) ? runtimeAlias(e.callee.name) : e.callee.name}(${args})`;
           case "Plain":
             return `${e.callee.name}(${args})`;
           case "Local":

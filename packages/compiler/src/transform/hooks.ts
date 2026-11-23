@@ -1,4 +1,3 @@
-// Layer 2 of ComponentLowering: props declarations, hooks (useMutable, useSound, useGameState, handlers) and state types.
 import { SyntaxKind, type ArrowFunction, type Node } from "typescript/ast";
 import {
   isArrowFunction,
@@ -19,6 +18,8 @@ import {
   type UseStoreCallAnalysis,
   type UseContextCallAnalysis,
 } from "../analyzer/analyzer.ts";
+// Layer 2 of ComponentLowering: props declarations, hooks (useMutable, useSound, useGameState, handlers) and state types.
+import { runtimeAlias } from "../analyzer/util.ts";
 import { DiagnosticCode, warning, type CompilerDiagnostic } from "../diagnostics/diagnostics.ts";
 import { type GameStateEntry } from "../gamestate/schema.ts";
 import { HANDLER_SIGNATURES } from "../ir/handlers.ts";
@@ -746,7 +747,7 @@ export class HookLowering extends ExpressionLowering {
       (initial.callee.kind === "Function" || initial.callee.kind === "Plain") &&
       !initial.callee.name.startsWith("Math.")
     ) {
-      return { kind: "SourceType", text: `ReturnType<typeof ${initial.callee.name}>` };
+      return { kind: "SourceType", text: `ReturnType<typeof ${this.calleeLocal(initial.callee)}>` };
     }
     // `pos: { x: 0, y: 0 }`: the literal's type, as TypeScript infers it (`{ x: number; y: number }`).
     const literal = this.literalType(initial);
@@ -776,6 +777,14 @@ export class HookLowering extends ExpressionLowering {
    * written. An imported constant has its declared type, widened as a `let` would widen it (`START_GOLD`, declared
    * `= 100`, is `number`), and a call of an imported function has the type it returns.
    */
+  /**
+   * What the generated module calls a function by: a plain import by its name, and a runtime function by its own name, or by
+   * `runtimeAlias` where the file uses that name for something of its own (the generator imports it so).
+   */
+  protected calleeLocal(callee: { readonly kind: string; readonly name: string }): string {
+    return callee.kind === "Function" && this.plainImports.has(callee.name) ? runtimeAlias(callee.name) : callee.name;
+  }
+
   protected literalType(e: ExprIR): string | null {
     const primitive = this.inferType(e);
     if (primitive !== null) return primitive;
@@ -784,7 +793,7 @@ export class HookLowering extends ExpressionLowering {
       return `(${t} extends number ? number : ${t} extends string ? string : ${t} extends boolean ? boolean : ${t})`;
     }
     if (e.kind === "Call" && (e.callee.kind === "Function" || e.callee.kind === "Plain") && !e.callee.name.startsWith("Math.")) {
-      return `ReturnType<typeof ${e.callee.name}>`;
+      return `ReturnType<typeof ${this.calleeLocal(e.callee)}>`;
     }
     if (e.kind === "ObjectLiteral") {
       const fields: string[] = [];
