@@ -22,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The page's script: draws each case into the window and returns the pixels asked for, RGBA, from the top left. */
 const PAGE = `
 import { TSE_OP_RECT, TSE_OP_BOX, TSE_OP_SPRITE_REGION, TSE_OP_LAYER_BEGIN, TSE_OP_LAYER_END, TSE_OP_SCISSOR, TSE_OP_SCISSOR_END,
-  TSE_OP_CANVAS, TSE_OP_VIEW, TSE_BLEND_MULTIPLY, TSE_BLEND_NORMAL } from "@tsengine/player";
+  TSE_OP_CANVAS, TSE_OP_VIEW, TSE_OP_SPRITE_SHADED, TSE_BLEND_MULTIPLY, TSE_BLEND_NORMAL } from "@tsengine/player";
 import { WebRenderer } from "./src/renderer.ts";
 
 const canvas = document.createElement("canvas");
@@ -30,8 +30,9 @@ canvas.width = 64; canvas.height = 64;
 document.body.append(canvas);
 const gl = canvas.getContext("webgl2", { antialias: false, premultipliedAlpha: false });
 const textures = [];
+const shaders = [];
 const renderer = new WebRenderer(gl, {
-  texture: (h) => textures[h] ?? null, silhouette: () => null, shader: () => null, text: () => null,
+  texture: (h) => textures[h] ?? null, silhouette: () => null, shader: (h) => shaders[h] ?? null, text: () => null,
 }, false);
 // A 2 x 1 texture: red, then green.
 textures.push(renderer.makeTexture(2, 1, new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255]), false));
@@ -78,11 +79,41 @@ out.canvasScaled = pixel(14, 14); out.canvasBorder = pixel(40, 40);
 draw([TSE_OP_VIEW, 1, 0, 0, 1, 2, 0, TSE_OP_RECT, ...at(2, 4), 4, 4, 0xff0000ff], 2);
 out.scaledIn = pixel(9, 9); out.scaledOut = pixel(5, 5);
 
+// A shaded sprite (ABI v16), as native/test/smoke.c draws one: white where the image's x runs left on the target; else its left
+// half the lookup texture's colour, its right half params[0] green.
+shaders.push(renderer.compileLayerShader([
+  "vec4 effect(vec2 uv) {",
+  "  vec2 at = uv * vec2(textureSize(image, 0)) - region.xy;",
+  "  if ((transpose(turn) * vec2(1.0, 0.0)).x < 0.0) return vec4(1.0);",
+  "  if (at.x < region.z / 2.0) return texture(lookup, vec2(0.5));",
+  "  return vec4(0.0, params[0], 0.0, 1.0);",
+  "}",
+].join("\\n")));
+textures.push(renderer.makeTexture(16, 16, new Uint8Array(16 * 16 * 4).fill(255), false)); // 1: a white square
+textures.push(renderer.makeTexture(1, 1, new Uint8Array([255, 0, 0, 255]), false)); // 2: the lookup, red
+const shaded = (x, y, rot, flags, shader, lookup) => [TSE_OP_SPRITE_SHADED, x, y, rot, 1, 1, 1, 0, 0, 16, 16, 8, 8, flags, 0xffffffff,
+  shader, lookup, 1, 0, 0, 0, 0, 0, 0, 0];
+draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, 2)]);
+out.shadedLookup = pixel(20, 24); out.shadedParam = pixel(28, 24); out.shadedOut = pixel(4, 4);
+draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, -1)]);
+out.shadedNoLookup = pixel(20, 24);
+draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, Math.PI, 0, 0, 2)]);
+out.shadedTurned = pixel(24, 24);
+draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 1, 0, 2)]);
+out.shadedFlipped = pixel(24, 24);
+draw([TSE_OP_VIEW, -1, 0, 0, 1, 64, 0, ...shaded(40, 24, Math.PI, 0, 0, 2)]);
+out.shadedMirroredView = pixel(20, 24);
+draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 7, 2)]);
+out.shadedNoShader = pixel(24, 24);
+// After a shaded sprite, a plain region is drawn with the plain program again.
+draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, 2), TSE_OP_SPRITE_REGION, ...at(0, 0), 0, 0, 0, 2, 1, 0, 0, 0, 0xffffffff]);
+out.afterShaded = pixel(0, 0);
+
 window.result = out;
 `;
 
 test(
-  "the WebGL2 renderer draws rects, boxes, flipped regions, layers, scissors, a canvas and a scale as libtse does",
+  "the WebGL2 renderer draws rects, boxes, flipped regions, layers, scissors, a canvas, a scale and shaded sprites as libtse does",
   { skip: chromium === null ? "Playwright's Chromium is not installed" : false, timeout: 60_000 },
   async () => {
     const bundle = await build({
@@ -114,6 +145,15 @@ test(
       assert.deepEqual(r.canvasBorder, [0, 0, 255, 255]);
       assert.deepEqual(r.scaledIn, [255, 0, 0, 255], "(2 + 2, 4) at scale 2 starts at (8, 8)");
       assert.deepEqual(r.scaledOut, [0, 0, 0, 255]);
+      assert.deepEqual(r.shadedLookup, [255, 0, 0, 255], "a shaded sprite's left half samples the lookup texture");
+      assert.deepEqual(r.shadedParam, [0, 255, 0, 255], "...its right half is params[0] green");
+      assert.deepEqual(r.shadedOut, [0, 0, 0, 255], "...and nothing is drawn outside its region");
+      assert.deepEqual(r.shadedNoLookup, [255, 255, 255, 255], "with no lookup texture the lookup is a white pixel");
+      assert.deepEqual(r.shadedTurned, [255, 255, 255, 255], "turned half round, the image's x runs left: turn says so");
+      assert.deepEqual(r.shadedFlipped, [255, 255, 255, 255], "mirrored, the image's x runs left too");
+      assert.deepEqual(r.shadedMirroredView, [255, 0, 0, 255], "a mirroring view undoes the half turn");
+      assert.deepEqual(r.shadedNoShader, [255, 255, 255, 255], "an unknown shader handle draws the region plainly");
+      assert.deepEqual(r.afterShaded, [255, 0, 0, 255], "a plain region after a shaded sprite is drawn plainly");
     } finally {
       await browser.close();
     }

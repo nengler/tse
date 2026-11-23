@@ -152,9 +152,13 @@ static const char *SHADER_HEAD =
   "uniform vec2 resolution;\n"
   "uniform float time;\n"
   "uniform float params[8];\n"
+  "uniform vec4 region;\n"
+  "uniform vec4 tseTurn;\n"
+  "uniform sampler2D lookup;\n"
   "out vec4 finalColor;\n"
   "vec2 pixel;\n"
   "#define image texture0\n"
+  "#define turn mat2(tseTurn.xy, tseTurn.zw)\n"
   "#line 1\n";
 static const char *SHADER_TAIL =
   "\nvoid main() {\n"
@@ -182,7 +186,7 @@ int32_t tse_load_shader(const char *path) {
   free(source);
   /* raylib falls back to its default shader when compiling fails: that is a failure here. */
   if (shader.id == 0 || shader.id == rlGetShaderIdDefault()) {
-    TraceLog(LOG_WARNING, "TSE: the shader %s did not compile (the message above says why): its layers are drawn without it", path);
+    TraceLog(LOG_WARNING, "TSE: the shader %s did not compile (the message above says why): what it shades is drawn without it", path);
     return -1;
   }
   if (shaders.count == shaders.capacity) {
@@ -200,6 +204,9 @@ int32_t tse_load_shader(const char *path) {
     .resolution = GetShaderLocation(shader, "resolution"),
     .time = GetShaderLocation(shader, "time"),
     .params = GetShaderLocation(shader, "params"),
+    .region = GetShaderLocation(shader, "region"),
+    .turn = GetShaderLocation(shader, "tseTurn"),
+    .lookup = GetShaderLocation(shader, "lookup"),
   };
   return shaders.count++;
 #endif

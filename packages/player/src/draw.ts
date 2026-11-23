@@ -69,6 +69,8 @@ import {
   TSE_OP_SPRITE_LEN,
   TSE_OP_SPRITE_REGION,
   TSE_OP_SPRITE_REGION_LEN,
+  TSE_OP_SPRITE_SHADED,
+  TSE_OP_SPRITE_SHADED_LEN,
   TSE_SPRITE_FLIP_X,
   TSE_SPRITE_FLIP_Y,
   TSE_SPRITE_SILHOUETTE,
@@ -273,6 +275,8 @@ function recordLength(op: number): number {
       return TSE_OP_LAYER_END_LEN;
     case TSE_OP_LIGHT:
       return TSE_OP_LIGHT_LEN;
+    case TSE_OP_SPRITE_SHADED:
+      return TSE_OP_SPRITE_SHADED_LEN;
     default:
       throw new Error(`Unknown draw op ${op}.`);
   }
@@ -754,6 +758,48 @@ export class DrawList {
     r[at + 6] = originY;
     r[at + 7] = flags;
     r[at + 8] = tint;
+  }
+
+  /**
+   * A region drawn through a shader (`TSE_OP_SPRITE_SHADED`): `spriteRegion`'s fields, then the shader's handle, the lookup
+   * texture's (-1 for none) and up to eight `params` (the rest 0).
+   */
+  spriteShaded(
+    world: WorldTransform,
+    texture: number,
+    srcX: number,
+    srcY: number,
+    srcW: number,
+    srcH: number,
+    originX: number,
+    originY: number,
+    flags: number,
+    tint: PackedColor,
+    shader: number,
+    lookup: number,
+    params: readonly number[]
+  ): void {
+    if (this.alpha !== 1) {
+      if (this.alpha === 0) return;
+      tint = fadeColor(tint, this.alpha);
+    }
+    const at = this.#header(TSE_OP_SPRITE_SHADED, TSE_OP_SPRITE_SHADED_LEN, world);
+    const r = this.records;
+    r[at] = texture;
+    r[at + 1] = srcX;
+    r[at + 2] = srcY;
+    r[at + 3] = srcW;
+    r[at + 4] = srcH;
+    r[at + 5] = originX;
+    r[at + 6] = originY;
+    r[at + 7] = flags;
+    r[at + 8] = tint;
+    r[at + 9] = shader;
+    r[at + 10] = lookup;
+    for (let i = 0; i < 8; i++) {
+      const p = params[i];
+      r[at + 11 + i] = typeof p === "number" && Number.isFinite(p) ? p : 0;
+    }
   }
 
   rect(world: WorldTransform, width: number, height: number, color: PackedColor): void {
@@ -3102,7 +3148,7 @@ export class FrameBuilder {
     this.#list.light(at, node.radius, fadeColor(this.#color(node.color), intensity));
   }
 
-  /** The handle of a layer's shader, loaded the first time it is named: -1 for none (or one that failed), with a warning once. */
+  /** The handle of a layer's or a sprite's shader, loaded the first time it is named: -1 for none (or one that failed), with a warning once. */
   #shader(name: string): number {
     if (name === "") return -1;
     let handle = this.#shaders.get(name);
@@ -3113,10 +3159,13 @@ export class FrameBuilder {
       if (handle === -1)
         this.#warner.once(
           `shader:${name}`,
-          `The shader '${path}' could not be loaded (a missing file, or GLSL that does not compile): its layer is drawn without it.`
+          `The shader '${path}' could not be loaded (a missing file, or GLSL that does not compile): what it shades is drawn without it.`
         );
       else if (handle === -2)
-        this.#warner.once("shaders-unsupported", "This renderer runs no shaders (the software renderer): layers are drawn without them.");
+        this.#warner.once(
+          "shaders-unsupported",
+          "This renderer runs no shaders (the software renderer): layers and sprites are drawn without them."
+        );
     }
     return handle < 0 ? -1 : handle;
   }
@@ -3166,7 +3215,25 @@ export class FrameBuilder {
     const at = world;
     const sheet = node instanceof AnimatedSprite ? node.isSheet : node.frameWidth !== undefined || node.frameHeight !== undefined;
     const frame = node instanceof AnimatedSprite ? node.sheetFrame : node.frame;
-    this.#region(node.image, sheet, node.frameWidth, node.frameHeight, frame, node.originX, node.originY, node.flipX, node.flipY, tint, at);
+    const shader = node.shader === "" ? -1 : this.#shader(node.shader);
+    const lookup = shader >= 0 && node.lookup !== "" ? this.#texture(node.lookup) : -1;
+    this.#region(
+      node.image,
+      sheet,
+      node.frameWidth,
+      node.frameHeight,
+      frame,
+      node.originX,
+      node.originY,
+      node.flipX,
+      node.flipY,
+      tint,
+      at,
+      0,
+      shader,
+      lookup < 0 ? -1 : lookup,
+      node.params
+    );
     // `flash`: the same region again, as its shape filled with the flash colour at that fraction (and the sprite's opacity), so
     // the opaque pixels are mixed toward the colour and the transparent ones stay so.
     const flash = node.flash;
@@ -3194,7 +3261,7 @@ export class FrameBuilder {
     }
   }
 
-  /** One frame of an image (or all of it), as a sprite-region record. */
+  /** One frame of an image (or all of it), as a sprite-region record; through `shader` (a handle, -1 for none) as a shaded one. */
   #region(
     image: string,
     sheet: boolean,
@@ -3207,7 +3274,10 @@ export class FrameBuilder {
     flipY: boolean,
     tint: number,
     at: WorldTransform,
-    flags = 0
+    flags = 0,
+    shader = -1,
+    lookup = -1,
+    params: readonly number[] = NO_PARAMS
   ): void {
     if (image === "") return;
     const handle = this.#texture(image);
@@ -3232,18 +3302,10 @@ export class FrameBuilder {
       );
       return;
     }
-    this.#list.spriteRegion(
-      at,
-      handle,
-      srcX,
-      srcY,
-      frameWidth,
-      frameHeight,
-      originX,
-      originY,
-      flags | (flipX ? TSE_SPRITE_FLIP_X : 0) | (flipY ? TSE_SPRITE_FLIP_Y : 0),
-      tint
-    );
+    flags |= (flipX ? TSE_SPRITE_FLIP_X : 0) | (flipY ? TSE_SPRITE_FLIP_Y : 0);
+    if (shader >= 0)
+      this.#list.spriteShaded(at, handle, srcX, srcY, frameWidth, frameHeight, originX, originY, flags, tint, shader, lookup, params);
+    else this.#list.spriteRegion(at, handle, srcX, srcY, frameWidth, frameHeight, originX, originY, flags, tint);
   }
 
   /**

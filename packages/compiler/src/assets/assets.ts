@@ -26,8 +26,8 @@ import { nearest } from "../transform/helpers.ts";
 
 /** Props whose literal strings are asset names, by built-in. */
 export const ASSET_PROPS: Readonly<Record<string, readonly string[]>> = {
-  Sprite: ["image"],
-  AnimatedSprite: ["frames", "sheet"],
+  Sprite: ["image", "shader", "lookup"],
+  AnimatedSprite: ["frames", "sheet", "shader", "lookup"],
   Tilemap: ["image"],
   Flex: ["backgroundImage", "hoverBackgroundImage", "focusBackgroundImage", "pressedBackgroundImage", "disabledBackgroundImage"],
   Text: ["font"],
@@ -167,7 +167,7 @@ export function checkAssets(modules: readonly IRModule[], options: AssetCheckOpt
       if ((prop.kind !== "StaticProp" && prop.kind !== "DynamicProp") || !names.includes(prop.name)) continue;
       for (const name of valueStrings(prop.value))
         report(
-          tag === "Text" || tag === "Game" ? "font" : tag === "Music" ? "music file" : tag === "Layer" ? "shader" : "image",
+          tag === "Text" || tag === "Game" ? "font" : tag === "Music" ? "music file" : prop.name === "shader" ? "shader" : "image",
           name,
           span
         );

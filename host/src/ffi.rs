@@ -1,7 +1,7 @@
 //! `native/include/tse.h`, as Rust declarations. The header is the source of truth.
 use std::os::raw::c_char;
 
-pub const TSE_ABI_VERSION: i32 = 15;
+pub const TSE_ABI_VERSION: i32 = 16;
 pub const TSE_TYPED_MAX: usize = 64;
 
 pub const TSE_IN_LEN: usize = 7;
