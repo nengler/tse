@@ -132,7 +132,7 @@ export type DecodedRecord =
       /** Present (true) only when the record draws the region's shape in the tint (TSE_SPRITE_SILHOUETTE): a sprite's `flash`. */
       readonly silhouette?: true;
     } & Placed)
-  /** A region drawn through `shader` (the path it was loaded from), given `lookup` (a texture's path, or null) and its eight `params` (ABI v16). */
+  /** A region drawn through `shader` (the path it was loaded from), given `lookup` (a texture's path, or null), `time` and its eight `params` (ABI v16). */
   | ({
       readonly op: "spriteShaded";
       readonly texture: string;
@@ -147,6 +147,7 @@ export type DecodedRecord =
       readonly tint: string;
       readonly shader: string;
       readonly lookup: string | null;
+      readonly time: number;
       readonly params: readonly number[];
     } & Placed)
   | ({ readonly op: "rect"; readonly width: number; readonly height: number; readonly color: string } & Placed)
@@ -540,7 +541,8 @@ export class RecordingBackend implements Backend {
             tint: colorToHex(records[at + 14]!),
             shader,
             lookup,
-            params: Array.from(records.subarray(at + 17, at + 25)),
+            time: records[at + 17]!,
+            params: Array.from(records.subarray(at + 18, at + 26)),
           });
           at += TSE_OP_SPRITE_SHADED_LEN;
           break;

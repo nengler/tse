@@ -80,19 +80,19 @@ draw([TSE_OP_VIEW, 1, 0, 0, 1, 2, 0, TSE_OP_RECT, ...at(2, 4), 4, 4, 0xff0000ff]
 out.scaledIn = pixel(9, 9); out.scaledOut = pixel(5, 5);
 
 // A shaded sprite (ABI v16), as native/test/smoke.c draws one: white where the image's x runs left on the target; else its left
-// half the lookup texture's colour, its right half params[0] green.
+// half the lookup texture's colour, its right half params[0] green times its time (10) / 10.
 shaders.push(renderer.compileLayerShader([
   "vec4 effect(vec2 uv) {",
   "  vec2 at = uv * vec2(textureSize(image, 0)) - region.xy;",
   "  if ((transpose(turn) * vec2(1.0, 0.0)).x < 0.0) return vec4(1.0);",
   "  if (at.x < region.z / 2.0) return texture(lookup, vec2(0.5));",
-  "  return vec4(0.0, params[0], 0.0, 1.0);",
+  "  return vec4(0.0, params[0] * time / 10.0, 0.0, 1.0);",
   "}",
 ].join("\\n")));
 textures.push(renderer.makeTexture(16, 16, new Uint8Array(16 * 16 * 4).fill(255), false)); // 1: a white square
 textures.push(renderer.makeTexture(1, 1, new Uint8Array([255, 0, 0, 255]), false)); // 2: the lookup, red
 const shaded = (x, y, rot, flags, shader, lookup) => [TSE_OP_SPRITE_SHADED, x, y, rot, 1, 1, 1, 0, 0, 16, 16, 8, 8, flags, 0xffffffff,
-  shader, lookup, 1, 0, 0, 0, 0, 0, 0, 0];
+  shader, lookup, 10, 1, 0, 0, 0, 0, 0, 0, 0];
 draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, 2)]);
 out.shadedLookup = pixel(20, 24); out.shadedParam = pixel(28, 24); out.shadedOut = pixel(4, 4);
 draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, -1)]);

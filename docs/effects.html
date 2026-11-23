@@ -273,7 +273,7 @@ vec4 effect(vec2 uv) {
     <li>Besides what a layer's shader is given, <code>effect</code> gets <code>region</code> (the part of <code>image</code> drawn, as x, y, width and height in its pixels: one frame of a sheet), <code>turn</code> and <code>lookup</code>.</li>
     <li><code>turn</code> takes a direction in the image to the direction it is drawn on the screen (y down), with the sprite's rotation, its flips and the camera's. It never stretches, so <code>transpose(turn)</code> takes it back: a direction on the screen, found in the image.</li>
     <li><code>lookup</code> is a second image, from <code>lookup="ramps.png"</code>: a colour table, read with <code>texture</code> or <code>texelFetch</code>, so shading can step through colours you chose (warmer toward the light, cooler away from it) instead of only brightening and darkening. Without one it is a white pixel.</li>
-    <li><code>time</code> is 0 on a sprite. For one that moves with time, pass it in: <code>const time = useTime();</code> and <code>params={[time]}</code>.</li>
+    <li><code>time</code> is the game's seconds, as on a layer, so a shimmer or a pulse needs nothing from the game. A sprite with a shader is drawn afresh every frame because of it.</li>
     <li>Each shaded sprite is drawn on its own, so shade tens of sprites this way, not thousands. A missing file is a build error, as for a layer, and the software renderer draws the sprite as it is.</li>
   </ul>
 </section>

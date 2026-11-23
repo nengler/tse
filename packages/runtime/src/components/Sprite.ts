@@ -25,7 +25,7 @@ export interface SpriteOptions {
    * `vec4 effect(vec2 uv)`, as a `<Layer>`'s shader is, given the sprite's image as `image`, the part of it drawn as `region` (x, y,
    * width, height in its pixels), how it is turned on the screen as `turn` (a mat2 from a direction in the image to one on the
    * screen; `transpose(turn)` takes a screen direction into the image, which is how a light that stays put on the screen is found
-   * on a sprite that rolls), `lookup` and `params`. `time` is 0 here: pass the time in `params` for a shader that moves with it.
+   * on a sprite that rolls), `lookup`, `time` (the game's seconds) and `params`. Such a sprite is drawn afresh every frame.
    * The software renderer runs none, and draws the sprite as it is.
    */
   shader?: string;

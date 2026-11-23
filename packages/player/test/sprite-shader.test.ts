@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 /** A sprite's `shader` (ABI v16): its region is written as a shaded sprite record, with the shader, the lookup and the params. */
 import { describe, it } from "node:test";
 
-import { AnimatedSprite, Entity, Sprite, type GameObject, type SpriteProps } from "@tsengine/runtime";
+import { AnimatedSprite, Entity, Sprite, World, type GameObject, type SpriteProps } from "@tsengine/runtime";
 
 import { FrameBuilder } from "../src/draw.ts";
 import { KEYS, TSE_IN_LEN } from "../src/protocol.ts";
@@ -39,7 +39,7 @@ function entity(...children: GameObject[]): Entity {
 const sprite = (props: SpriteProps): Sprite => new Sprite(props);
 
 describe("a sprite's shader", () => {
-  it("writes a shaded sprite record: the region, then the shader and the lookup under assets, and its params padded to eight", () => {
+  it("writes a shaded sprite record: the region, the shader and the lookup under assets, the game's time and its params", () => {
     const backend = new RecordingBackend({ textureSizes: { "assets/apple.png": { width: 32, height: 32 } } });
     const apple = sprite({ image: "apple.png", originX: 16, originY: 16, shader: "fruit.glsl", lookup: "ramps.png", params: [0.5, 2] });
     apple.transform.x = 100;
@@ -65,6 +65,7 @@ describe("a sprite's shader", () => {
         tint: "#ffffffff",
         shader: "assets/fruit.glsl",
         lookup: "assets/ramps.png",
+        time: 4,
         params: [0.5, 2, 0, 0, 0, 0, 0, 0],
       },
     ]);
@@ -114,10 +115,15 @@ describe("a sprite's shader", () => {
     assert.match(none.warnings.join("\n"), /runs no shaders/);
   });
 
-  it("is rewritten when its params change, and copied while nothing changes", () => {
+  it("is written again every frame with the game's time, still or not, and follows a change of its params", () => {
     const backend = new RecordingBackend({});
     const s = sprite({ image: "a.png", shader: "s.glsl", params: [1] });
-    const root = entity(s);
+    // A still sibling and a parent that never changes, whose records the builder copies from the last frame.
+    const root = entity(entity(s, sprite({ image: "b.png" })), sprite({ image: "c.png" }));
+    // Mounted, as a game's tree is: only then does the builder copy records from the last frame.
+    const world = new World();
+    world.mount(root);
+    world.flush();
     const warnings: string[] = [];
     const builder = new FrameBuilder({
       loadTexture: (path) => backend.loadTexture(path),
@@ -125,18 +131,21 @@ describe("a sprite's shader", () => {
       warn: (message) => warnings.push(message),
       textureSize: (handle) => backend.textureSize(handle) ?? { width: 0, height: 0 },
       measureText: (text, size) => ({ width: text.length * 8, height: size }),
+      // Checks every frame against one built from nothing, so a record copied with an old time fails here.
       retain: "check",
     });
-    const params = (): number[] => {
-      const built = builder.build(root, 400, 300, 0);
+    const shaded = (time: number): Extract<DecodedRecord, { op: "spriteShaded" }> => {
+      world.tick(1 / 60);
+      world.flush();
+      const built = builder.build(root, 400, 300, time);
       backend.frame(0, built.list.records, built.list.length, built.list.texts, new Float64Array(TSE_IN_LEN), new Uint8Array(KEYS.length));
-      return [...(backend.lastFrame.records.find((r) => r.op === "spriteShaded") as Extract<DecodedRecord, { op: "spriteShaded" }>).params];
+      return backend.lastFrame.records.find((r) => r.op === "spriteShaded") as Extract<DecodedRecord, { op: "spriteShaded" }>;
     };
-    assert.equal(params()[0], 1);
-    assert.equal(params()[0], 1);
+    assert.deepEqual([shaded(1).time, shaded(2).time, shaded(2.5).time], [1, 2, 2.5]);
     s.params = [3];
     s.markChanged();
-    assert.equal(params()[0], 3);
+    const after = shaded(3);
+    assert.deepEqual([after.time, after.params[0]], [3, 3]);
     assert.deepEqual(warnings, []);
   });
 

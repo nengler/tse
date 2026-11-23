@@ -821,7 +821,7 @@ export class WebRenderer {
     const lookupHandle = toIndex(r[at + 16]!);
     const lookup = lookupHandle >= 0 ? this.#assets.texture(lookupHandle) : null;
     const turn = this.#turn(r, at, flags);
-    this.#beginShader(shader, tex, 0, r, at + 17, r[at + 7]!, r[at + 8]!, r[at + 9]!, r[at + 10]!, turn, lookup);
+    this.#beginShader(shader, tex, finite(r[at + 17]!), r, at + 18, r[at + 7]!, r[at + 8]!, r[at + 9]!, r[at + 10]!, turn, lookup);
     this.#regionRecord(r, at, tex, flags, true);
     this.#endShader();
   }

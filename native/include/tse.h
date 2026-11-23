@@ -74,14 +74,13 @@
  *                                                target, with the blend mode it had. A layer still open when the frame
  *                                                ends is closed as if by an END with TSE_BLEND_NORMAL, white, no shader.
  *   TSE_OP_SPRITE_SHADED  op, x, y, rot, sx, sy, texture, srcX, srcY, srcW, srcH, originX, originY, flags, tint, shader, lookup,
- *                         p0, p1, p2, p3, p4, p5, p6, p7
+ *                         time, p0, p1, p2, p3, p4, p5, p6, p7
  *                                                (since ABI v16) A TSE_OP_SPRITE_REGION whose pixels each go through `shader` (a
- *                                                handle from tse_load_shader), given the eight parameters, the region (`region`),
- *                                                how the image is turned on the target (`turn`) and the texture `lookup` (a
- *                                                handle from tse_load_texture, -1 for none: a white pixel). `time` is 0: a sprite's
- *                                                record changes only when the sprite does, so a shader that moves with time is
- *                                                given the time in a parameter. With no shader (-1, or one that did not load) it is
- *                                                drawn as the region record would be. TSE_SPRITE_SILHOUETTE is ignored.
+ *                                                handle from tse_load_shader), given `time`, the eight parameters, the region
+ *                                                (`region`), how the image is turned on the target (`turn`) and the texture
+ *                                                `lookup` (a handle from tse_load_texture, -1 for none: a white pixel). With no
+ *                                                shader (-1, or one that did not load) it is drawn as the region record would be.
+ *                                                TSE_SPRITE_SILHOUETTE is ignored.
  */
 #define TSE_OP_VIEW     1
 #define TSE_OP_SPRITE   2
@@ -112,7 +111,7 @@
 #define TSE_OP_LAYER_BEGIN_LEN 3
 #define TSE_OP_LAYER_END_LEN   13
 #define TSE_OP_LIGHT_LEN       8
-#define TSE_OP_SPRITE_SHADED_LEN 25
+#define TSE_OP_SPRITE_SHADED_LEN 26
 
 /* Blend modes of TSE_OP_LAYER_BEGIN and TSE_OP_LAYER_END, as the source s (what is drawn, alpha a) meets the destination d:
  *   NORMAL    s * a + d * (1 - a)       painting over

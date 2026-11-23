@@ -40,7 +40,7 @@ export const TSE_OP_BOX_LEN = 12;
 export const TSE_OP_LAYER_BEGIN_LEN = 3;
 export const TSE_OP_LAYER_END_LEN = 13;
 export const TSE_OP_LIGHT_LEN = 8;
-export const TSE_OP_SPRITE_SHADED_LEN = 25;
+export const TSE_OP_SPRITE_SHADED_LEN = 26;
 
 /** What `tse_load_shader` gives in a build that cannot run shaders (the software renderer). Not in `PROTOCOL`: the header writes it in parentheses. */
 export const TSE_SHADER_UNSUPPORTED = -2;

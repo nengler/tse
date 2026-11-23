@@ -2197,8 +2197,9 @@ cleared to the darkness, with the lights in it drawn with `childBlend="add"`, an
   turned on the screen, a rotation or a mirror; `transpose(turn)` takes a screen direction such as "towards the light" into the
   image) and `lookup` (a second image, for a colour table: shading that steps through chosen colours, warmer in the light and cooler
   in the dark, rather than brightening). A record of its own (`SPRITE_SHADED`), not a state record around ordinary ones, for the
-  reason blend modes are not on sprites: the frame is sorted by `z` after it is written. `time` is 0 on a sprite, so that a still
-  sprite's record can still be copied from the last frame; a shader that moves is given the time in `params`.
+  reason blend modes are not on sprites: the frame is sorted by `z` after it is written. It is given the game's `time`, as a layer
+  is, so a sprite's record with a shader is written again every frame rather than copied from the last: a shimmer or a pulse needs
+  no help from the game. That costs little, because shaded sprites are few and each is its own draw call anyway.
 - **Lights** (2026-11-15, ABI v12): `<Lighting ambient>` is a `Layer` subclass fixed to `multiply` over the world and `add` among its
   children, cleared to the ambient colour; `<Light radius color intensity>` is a leaf drawn as a native falloff (`TSE_OP_LIGHT`), so a
   light needs no image and looks the same in tests. No shadows: walls do not block light. A light outside a `<Lighting>` is drawn as a

@@ -541,7 +541,7 @@ static void draw_shaded_sprite(const double *r) {
     const float region[4] = { (float)r[7], (float)r[8], (float)r[9], (float)r[10] };
     float turn[4];
     sprite_turn(r, flags, turn);
-    begin_shader(&shader, 0.0f, r + 17, region, turn, to_index(r[16]));
+    begin_shader(&shader, isfinite(r[17]) ? (float)r[17] : 0.0f, r + 18, region, turn, to_index(r[16]));
   }
   draw_region(r, texture, flags);
   if (shaded) {

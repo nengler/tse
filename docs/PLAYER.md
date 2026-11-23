@@ -164,8 +164,8 @@ tests stay byte-identical): `SPRITE_REGION` sits beside `SPRITE`, a `<Flex>` wit
   scale and flips, its first column normalised and its second that turned a quarter (mirrored when the determinant is negative), so
   it is always a rotation or a reflection and `transpose(turn)` inverts it. raylib has no mat2 uniform, so it goes up as a vec4
   (`tseTurn`) and `turn` is a macro that builds the matrix. A layer gets the whole target as its region, the identity and a white
-  lookup. `time` is 0 on a sprite: a sprite's records are copied from the last frame while it does not change, and a time in the
-  record would have to change them every frame; a shader that moves takes the time through `params`. Each shaded sprite is its own
+  lookup. The record carries the animation clock as a layer's does, so a sprite with a shader is never copied from the last frame
+  (`shadedSprite` in `draw.ts` makes its walk volatile, as a layer's is). Each shaded sprite is its own
   draw call (the batch is flushed before and after it), which is fine for tens of sprites, not thousands. The silhouette flag is
   ignored on it: a flash is written as its own silhouette region after it.
 - **Lights** are discs drawn in rlgl's immediate mode as rings with a `(1 − d)²` falloff, premultiplied by their strength, so they need

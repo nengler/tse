@@ -762,7 +762,7 @@ export class DrawList {
 
   /**
    * A region drawn through a shader (`TSE_OP_SPRITE_SHADED`): `spriteRegion`'s fields, then the shader's handle, the lookup
-   * texture's (-1 for none) and up to eight `params` (the rest 0).
+   * texture's (-1 for none), the `time` it is given and up to eight `params` (the rest 0).
    */
   spriteShaded(
     world: WorldTransform,
@@ -777,6 +777,7 @@ export class DrawList {
     tint: PackedColor,
     shader: number,
     lookup: number,
+    time: number,
     params: readonly number[]
   ): void {
     if (this.alpha !== 1) {
@@ -796,9 +797,10 @@ export class DrawList {
     r[at + 8] = tint;
     r[at + 9] = shader;
     r[at + 10] = lookup;
+    r[at + 11] = Number.isFinite(time) ? time : 0;
     for (let i = 0; i < 8; i++) {
       const p = params[i];
-      r[at + 11 + i] = typeof p === "number" && Number.isFinite(p) ? p : 0;
+      r[at + 12 + i] = typeof p === "number" && Number.isFinite(p) ? p : 0;
     }
   }
 
@@ -1208,6 +1210,14 @@ function styledSprite(node: Sprite | AnimatedSprite): boolean {
   return node instanceof AnimatedSprite
     ? node.styled
     : node.frameWidth !== undefined || node.frameHeight !== undefined || node.frame !== 0 || isStyled(node);
+}
+
+/**
+ * A sprite drawn through a shader: its record holds the game's time, so it is written again every frame, never copied from the last
+ * (as a layer's are not).
+ */
+function shadedSprite(node: GameObject, kind: number): boolean {
+  return kind === KIND_SPRITE && (node as Sprite | AnimatedSprite).shader !== "";
 }
 
 /** A rect and an ellipse are records of one length, which the walk relies on when it writes a shape in place: this line stops compiling if they ever differ. */
@@ -1790,7 +1800,11 @@ export class FrameBuilder {
           list.popAlpha();
           return WALK_OPAQUE;
         }
-        return (code & FLAG_OPAQUE) !== 0 ? WALK_OPAQUE : z !== 0 || code >= FLAG_VOLATILE ? WALK_VOLATILE : WALK_CLEAN;
+        return (code & FLAG_OPAQUE) !== 0
+          ? WALK_OPAQUE
+          : z !== 0 || code >= FLAG_VOLATILE || shadedSprite(node, kind)
+            ? WALK_VOLATILE
+            : WALK_CLEAN;
       }
       const childAnc = (code & FLAG_OPAQUE) !== 0 || faded ? Infinity : node.selfChangedAt > anc ? node.selfChangedAt : anc;
       // Nothing above changed this frame: what is under is worth copying from last frame, and worth writing down for the next.
@@ -1818,7 +1832,7 @@ export class FrameBuilder {
 
       // This object changed this frame, or something above it did (or nothing is reused at all): everything under it is made
       // again, and nothing is written down; a child that was is told its place is no longer known.
-      let volatile = z !== 0 || code >= FLAG_VOLATILE;
+      let volatile = z !== 0 || code >= FLAG_VOLATILE || shadedSprite(node, kind);
       const isCamera = kind === KIND_CAMERA;
       const childSpace = isCamera ? parentSpace : at;
       const childZ = isCamera ? parentZ : z;
@@ -3304,7 +3318,22 @@ export class FrameBuilder {
     }
     flags |= (flipX ? TSE_SPRITE_FLIP_X : 0) | (flipY ? TSE_SPRITE_FLIP_Y : 0);
     if (shader >= 0)
-      this.#list.spriteShaded(at, handle, srcX, srcY, frameWidth, frameHeight, originX, originY, flags, tint, shader, lookup, params);
+      this.#list.spriteShaded(
+        at,
+        handle,
+        srcX,
+        srcY,
+        frameWidth,
+        frameHeight,
+        originX,
+        originY,
+        flags,
+        tint,
+        shader,
+        lookup,
+        this.#time ?? 0,
+        params
+      );
     else this.#list.spriteRegion(at, handle, srcX, srcY, frameWidth, frameHeight, originX, originY, flags, tint);
   }
 
