@@ -74,6 +74,11 @@ static void layer_end_shaded(int blend, uint32_t tint, int32_t shader, double ti
   push(TSE_OP_LAYER_END); push(blend); push(tint); push(shader); push(time); push(p0);
   for (int i = 1; i < 8; i++) push(0);
 }
+static void shaded(double x, double y, double rot, int32_t texture, double size, int flags, int32_t shader, int32_t lookup, double p0) {
+  header(TSE_OP_SPRITE_SHADED, x, y, rot, 1, 1); push(texture); push(0); push(0); push(size); push(size); push(size / 2); push(size / 2);
+  push(flags); push(WHITE_RGBA); push(shader); push(lookup); push(10); push(p0);
+  for (int i = 1; i < 8; i++) push(0);
+}
 static void light(double x, double y, double radius, uint32_t color) { header(TSE_OP_LIGHT, x, y, 0, 1, 1); push(radius); push(color); }
 static void layer_end(int blend, uint32_t tint) { layer_end_shaded(blend, tint, -1, 0, 0); }
 /* Whether each channel of a pixel is within `tolerance` of rgba. */
@@ -675,6 +680,50 @@ int main(void) {
 #endif
     remove("tse_smoke_shader.glsl");
     remove("tse_smoke_bad.glsl");
+  }
+  {
+    /* Shaded sprites (ABI v16): a sprite region through a shader, given its region, how it is turned and a lookup texture. */
+    FILE *f = fopen("tse_smoke_sprite.glsl", "w");
+    /* White where the image's x runs left on the target; else its left half the lookup's colour, its right half params[0] green. */
+    fputs("vec4 effect(vec2 uv) {\n"
+          "  vec2 at = uv * vec2(textureSize(image, 0)) - region.xy;\n"
+          "  if ((transpose(turn) * vec2(1.0, 0.0)).x < 0.0) return vec4(1.0);\n"
+          "  if (at.x < region.z / 2.0) return texture(lookup, vec2(0.5));\n"
+          "  return vec4(0.0, params[0] * time / 10.0, 0.0, 1.0);\n"
+          "}\n", f);
+    fclose(f);
+    Image square = GenImageColor(16, 16, (Color){ 0x00, 0x00, 0xff, 0xff });
+    CHECK(ExportImage(square, "tse_smoke_square.png"), "write the square texture");
+    UnloadImage(square);
+    Image red = GenImageColor(2, 2, (Color){ 0xff, 0x00, 0x00, 0xff });
+    CHECK(ExportImage(red, "tse_smoke_lookup.png"), "write the lookup texture");
+    UnloadImage(red);
+    int32_t square_tex = tse_load_texture("tse_smoke_square.png");
+    int32_t lookup_tex = tse_load_texture("tse_smoke_lookup.png");
+    int32_t shader = tse_load_shader("tse_smoke_sprite.glsl");
+#if defined(TSE_SMOKE_SOFTWARE)
+    reset(); view(1, 0, 0, 1, 0, 0); shaded(24, 24, 0, square_tex, 16, 0, shader, lookup_tex, 1); frame();
+    expect(20, 24, 0x0000ffffu, "without shaders a shaded sprite is drawn as its region");
+    expect(4, 4, CLEAR, "...and only where the region is");
+#else
+    reset(); view(1, 0, 0, 1, 0, 0); shaded(24, 24, 0, square_tex, 16, 0, shader, lookup_tex, 1); frame();
+    expect_near(20, 24, C_RED, "a shaded sprite's left half samples the lookup texture");
+    expect_near(28, 24, C_GREEN, "...its right half is params[0] green, times its time (10) / 10");
+    expect(4, 4, CLEAR, "...and nothing is drawn outside its region");
+    reset(); view(1, 0, 0, 1, 0, 0); shaded(24, 24, 0, square_tex, 16, 0, shader, -1, 1); frame();
+    expect_near(20, 24, WHITE_RGBA, "with no lookup texture the lookup is a white pixel");
+    reset(); view(1, 0, 0, 1, 0, 0); shaded(24, 24, 3.14159265, square_tex, 16, 0, shader, lookup_tex, 1); frame();
+    expect_near(24, 24, WHITE_RGBA, "turned half round, the image's x runs left: turn says so");
+    reset(); view(1, 0, 0, 1, 0, 0); shaded(24, 24, 0, square_tex, 16, TSE_SPRITE_FLIP_X, shader, lookup_tex, 1); frame();
+    expect_near(24, 24, WHITE_RGBA, "mirrored, the image's x runs left too");
+    reset(); view(-1, 0, 0, 1, 64, 0); shaded(40, 24, 3.14159265, square_tex, 16, 0, shader, lookup_tex, 1); frame();
+    expect_near(20, 24, C_RED, "a view that mirrors the world undoes the half turn: the lookup half is on the left again");
+    reset(); view(1, 0, 0, 1, 0, 0); shaded(24, 24, 0, square_tex, 16, 0, 999, lookup_tex, 1); frame();
+    expect(24, 24, 0x0000ffffu, "an unknown shader handle draws the region plainly");
+#endif
+    remove("tse_smoke_sprite.glsl");
+    remove("tse_smoke_square.png");
+    remove("tse_smoke_lookup.png");
   }
   /* Lights (ABI v12): a falloff from the colour to black, added into a light map. */
   reset(); view(1, 0, 0, 1, 0, 0); layer_begin(0x000000ffu, TSE_BLEND_ADD); light(32, 24, 20, 0xff8040ffu); layer_end(TSE_BLEND_NORMAL, WHITE_RGBA); frame();

@@ -42,6 +42,8 @@ import {
   TSE_OP_SPRITE_LEN,
   TSE_OP_SPRITE_REGION,
   TSE_OP_SPRITE_REGION_LEN,
+  TSE_OP_SPRITE_SHADED,
+  TSE_OP_SPRITE_SHADED_LEN,
   TSE_SPRITE_FLIP_X,
   TSE_SPRITE_FLIP_Y,
   TSE_SPRITE_SILHOUETTE,
@@ -129,6 +131,24 @@ export type DecodedRecord =
       readonly tint: string;
       /** Present (true) only when the record draws the region's shape in the tint (TSE_SPRITE_SILHOUETTE): a sprite's `flash`. */
       readonly silhouette?: true;
+    } & Placed)
+  /** A region drawn through `shader` (the path it was loaded from), given `lookup` (a texture's path, or null), `time` and its eight `params` (ABI v16). */
+  | ({
+      readonly op: "spriteShaded";
+      readonly texture: string;
+      readonly srcX: number;
+      readonly srcY: number;
+      readonly srcW: number;
+      readonly srcH: number;
+      readonly originX: number;
+      readonly originY: number;
+      readonly flipX: boolean;
+      readonly flipY: boolean;
+      readonly tint: string;
+      readonly shader: string;
+      readonly lookup: string | null;
+      readonly time: number;
+      readonly params: readonly number[];
     } & Placed)
   | ({ readonly op: "rect"; readonly width: number; readonly height: number; readonly color: string } & Placed)
   | ({ readonly op: "ellipse"; readonly width: number; readonly height: number; readonly color: string } & Placed)
@@ -491,6 +511,40 @@ export class RecordingBackend implements Backend {
             ...((flags & TSE_SPRITE_SILHOUETTE) !== 0 ? { silhouette: true as const } : {}),
           });
           at += TSE_OP_SPRITE_REGION_LEN;
+          break;
+        }
+        case TSE_OP_SPRITE_SHADED: {
+          need(TSE_OP_SPRITE_SHADED_LEN);
+          const handle = records[at + 6] as number;
+          const texture = this.#textures[handle];
+          if (texture === undefined) throw new Error(`Shaded sprite record uses texture handle ${handle}, which was never loaded.`);
+          const shaderHandle = records[at + 15] as number;
+          const shader = this.#shaders[shaderHandle];
+          if (shader === undefined) throw new Error(`Shaded sprite record uses shader handle ${shaderHandle}, which was never loaded.`);
+          const lookupHandle = records[at + 16] as number;
+          const lookup = lookupHandle >= 0 ? this.#textures[lookupHandle] : null;
+          if (lookup === undefined)
+            throw new Error(`Shaded sprite record uses lookup texture handle ${lookupHandle}, which was never loaded.`);
+          const flags = records[at + 13] as number;
+          out?.push({
+            op: "spriteShaded",
+            ...placed(),
+            texture,
+            srcX: records[at + 7]!,
+            srcY: records[at + 8]!,
+            srcW: records[at + 9]!,
+            srcH: records[at + 10]!,
+            originX: records[at + 11]!,
+            originY: records[at + 12]!,
+            flipX: (flags & TSE_SPRITE_FLIP_X) !== 0,
+            flipY: (flags & TSE_SPRITE_FLIP_Y) !== 0,
+            tint: colorToHex(records[at + 14]!),
+            shader,
+            lookup,
+            time: records[at + 17]!,
+            params: Array.from(records.subarray(at + 18, at + 26)),
+          });
+          at += TSE_OP_SPRITE_SHADED_LEN;
           break;
         }
         case TSE_OP_RECT:

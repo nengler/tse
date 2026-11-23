@@ -7,7 +7,7 @@ import { KEY_NAMES, type KeyName } from "@tsengine/runtime";
 
 import { BUILTIN_FONT_METRICS } from "./fonts.ts";
 
-export const TSE_ABI_VERSION = 15;
+export const TSE_ABI_VERSION = 16;
 
 // Draw records: a flat array of doubles, each record starting with its op.
 export const TSE_OP_VIEW = 1;
@@ -23,6 +23,8 @@ export const TSE_OP_BOX = 10;
 export const TSE_OP_LAYER_BEGIN = 11;
 export const TSE_OP_LAYER_END = 12;
 export const TSE_OP_LIGHT = 13;
+/** A sprite region drawn through a shader (ABI v16). */
+export const TSE_OP_SPRITE_SHADED = 14;
 
 // Record lengths in doubles, op included.
 export const TSE_OP_VIEW_LEN = 7;
@@ -38,6 +40,7 @@ export const TSE_OP_BOX_LEN = 12;
 export const TSE_OP_LAYER_BEGIN_LEN = 3;
 export const TSE_OP_LAYER_END_LEN = 13;
 export const TSE_OP_LIGHT_LEN = 8;
+export const TSE_OP_SPRITE_SHADED_LEN = 26;
 
 /** What `tse_load_shader` gives in a build that cannot run shaders (the software renderer). Not in `PROTOCOL`: the header writes it in parentheses. */
 export const TSE_SHADER_UNSUPPORTED = -2;
@@ -112,6 +115,7 @@ export const PROTOCOL = {
   TSE_OP_LAYER_BEGIN,
   TSE_OP_LAYER_END,
   TSE_OP_LIGHT,
+  TSE_OP_SPRITE_SHADED,
   TSE_OP_VIEW_LEN,
   TSE_OP_SPRITE_LEN,
   TSE_OP_RECT_LEN,
@@ -125,6 +129,7 @@ export const PROTOCOL = {
   TSE_OP_LAYER_BEGIN_LEN,
   TSE_OP_LAYER_END_LEN,
   TSE_OP_LIGHT_LEN,
+  TSE_OP_SPRITE_SHADED_LEN,
   TSE_BLEND_NORMAL,
   TSE_BLEND_ADD,
   TSE_BLEND_MULTIPLY,

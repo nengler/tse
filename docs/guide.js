@@ -52,7 +52,10 @@
         ["tint", "CSS colour", "white", "Multiplies the image's colours. Its alpha is opacity too."],
         ["opacity", "number", "1", "0 to 1."],
         ["flash", "number", "0", "0 to 1: how far the image's colours are mixed toward <code>flashColor</code>; transparent pixels stay so. A hit flash: <code>flash={hit ? 0.8 : 0}</code> (a tint only darkens)."],
-        ["flashColor", "CSS colour", "white", "The colour <code>flash</code> mixes toward."]
+        ["flashColor", "CSS colour", "white", "The colour <code>flash</code> mixes toward."],
+        ["shader", "string", "–", "A file under <code>assets</code> holding <code>vec4 effect(vec2 uv)</code> in GLSL: each of the sprite's pixels goes through it as it is drawn, with how the sprite is turned on the screen. See <a href=\"effects.html#sprite-shaders\">Shaders on a sprite</a>. The software renderer runs no shaders."],
+        ["params", "number[]", "[]", "Up to eight numbers the shader reads as <code>params[0]</code> to <code>params[7]</code>."],
+        ["lookup", "string", "–", "An image under <code>assets</code> the shader reads as <code>lookup</code>: a colour table, say. Without one it is a white pixel."]
       ] },
     { name: "AnimatedSprite", kind: "leaf", sum: "Plays a list of images, or named animations from a sheet. Takes the sprite options of <code>Sprite</code>.",
       props: [
@@ -64,7 +67,7 @@
         ["animations", "table | string", "–", "<code>{ idle: { frames: \"0-1\", fps: 4 }, die: { frames: \"8-12\", once: true } }</code>, or <code>\"idle:0-1@4, die:8-12@10~\"</code> (<code>~</code> plays once)."],
         ["animation", "string", "–", "Which one plays. A new name restarts it; the same name does nothing."],
         ["loop", "boolean", "true", "<code>false</code> plays each once."],
-        ["flipX, flipY, originX, originY, tint, opacity, flash, flashColor", "", "", "As on <code>Sprite</code>."]
+        ["flipX, flipY, originX, originY, tint, opacity, flash, flashColor, shader, params, lookup", "", "", "As on <code>Sprite</code>."]
       ] },
     { name: "Tilemap", kind: "leaf", sum: "A grid of tiles from a sheet, with no object per tile. See <a href=\"systems.html#tilemaps\">Tilemaps</a>.",
       props: [

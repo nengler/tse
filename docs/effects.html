@@ -251,6 +251,31 @@ vec4 effect(vec2 uv) {
     <li>A missing file is a build error, with the nearest name, as a missing image is. GLSL that does not compile is reported when the game starts, with the compiler's message and a line in your file, and the layer is drawn without it.</li>
     <li>The software renderer that tests, previews and <code>tse screenshot</code> use runs no shaders: it draws the layer as it is and says so once. <code>tse screenshot --gpu</code> shows them.</li>
   </ul>
+  <h3 id="sprite-shaders">Shaders on a sprite</h3>
+  <p>A <code>&lt;Sprite&gt;</code> or <code>&lt;AnimatedSprite&gt;</code> can send its own pixels through a shader as it is drawn, with the same kind of file. A layer's shader sees the whole screen; a sprite's sees the sprite, and knows how it is turned. That is what lighting needs when the light stays put and the sprite rolls: a ball lit from the top right of the screen stays lit there however it spins.</p>
+<pre class="code" data-lang="glsl"><script type="text/plain">
+// assets/ball.glsl: lit from the top right of the screen, however the sprite is turned
+vec4 effect(vec2 uv) {
+  vec4 c = texture(image, uv);
+  if (c.a == 0.0) return c;
+  vec2 step = 1.0 / vec2(textureSize(image, 0));        // one of the image's pixels, in uv
+  vec2 light = transpose(turn) * normalize(vec2(1.0, -1.0)); // the screen's top right, in the image
+  // A pixel with nothing next to it toward the light is on the lit edge; with nothing toward the dark, on the shaded one.
+  float lit = texture(image, uv + light * step).a == 0.0 ? 1.0 : 0.0;
+  float dark = texture(image, uv - light * step).a == 0.0 ? 1.0 : 0.0;
+  return vec4(c.rgb * (1.0 + params[0] * (lit - dark)), c.a);
+}
+</script></pre>
+<pre class="code" data-lang="tsx"><script type="text/plain">
+<Sprite image="apple.png" originX={16} originY={16} rotation={spin} shader="ball.glsl" params={[0.3]} />
+</script></pre>
+  <ul>
+    <li>Besides what a layer's shader is given, <code>effect</code> gets <code>region</code> (the part of <code>image</code> drawn, as x, y, width and height in its pixels: one frame of a sheet), <code>turn</code> and <code>lookup</code>.</li>
+    <li><code>turn</code> takes a direction in the image to the direction it is drawn on the screen (y down), with the sprite's rotation, its flips and the camera's. It never stretches, so <code>transpose(turn)</code> takes it back: a direction on the screen, found in the image.</li>
+    <li><code>lookup</code> is a second image, from <code>lookup="ramps.png"</code>: a colour table, read with <code>texture</code> or <code>texelFetch</code>, so shading can step through colours you chose (warmer toward the light, cooler away from it) instead of only brightening and darkening. Without one it is a white pixel.</li>
+    <li><code>time</code> is the game's seconds, as on a layer, so a shimmer or a pulse needs nothing from the game. A sprite with a shader is drawn afresh every frame because of it.</li>
+    <li>Each shaded sprite is drawn on its own, so shade tens of sprites this way, not thousands. A missing file is a build error, as for a layer, and the software renderer draws the sprite as it is.</li>
+  </ul>
 </section>
 <section id="input" data-group="Effects and input" data-title="Input actions and timing">
   <h2>Input actions and timing</h2>

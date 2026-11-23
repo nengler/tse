@@ -7,7 +7,7 @@
  */
 #include <stdint.h>
 
-#define TSE_ABI_VERSION 15
+#define TSE_ABI_VERSION 16
 
 /* ---------- Draw records ----------
  * A frame is a flat array of doubles: records back to back, each starting with its op.
@@ -73,6 +73,14 @@
  *                                                eight parameters (see tse_load_shader). Drawing then carries on in that
  *                                                target, with the blend mode it had. A layer still open when the frame
  *                                                ends is closed as if by an END with TSE_BLEND_NORMAL, white, no shader.
+ *   TSE_OP_SPRITE_SHADED  op, x, y, rot, sx, sy, texture, srcX, srcY, srcW, srcH, originX, originY, flags, tint, shader, lookup,
+ *                         time, p0, p1, p2, p3, p4, p5, p6, p7
+ *                                                (since ABI v16) A TSE_OP_SPRITE_REGION whose pixels each go through `shader` (a
+ *                                                handle from tse_load_shader), given `time`, the eight parameters, the region
+ *                                                (`region`), how the image is turned on the target (`turn`) and the texture
+ *                                                `lookup` (a handle from tse_load_texture, -1 for none: a white pixel). With no
+ *                                                shader (-1, or one that did not load) it is drawn as the region record would be.
+ *                                                TSE_SPRITE_SILHOUETTE is ignored.
  */
 #define TSE_OP_VIEW     1
 #define TSE_OP_SPRITE   2
@@ -87,6 +95,7 @@
 #define TSE_OP_LAYER_BEGIN  11
 #define TSE_OP_LAYER_END    12
 #define TSE_OP_LIGHT        13
+#define TSE_OP_SPRITE_SHADED 14
 
 /* Record lengths in doubles, op included. */
 #define TSE_OP_VIEW_LEN    7
@@ -102,6 +111,7 @@
 #define TSE_OP_LAYER_BEGIN_LEN 3
 #define TSE_OP_LAYER_END_LEN   13
 #define TSE_OP_LIGHT_LEN       8
+#define TSE_OP_SPRITE_SHADED_LEN 26
 
 /* Blend modes of TSE_OP_LAYER_BEGIN and TSE_OP_LAYER_END, as the source s (what is drawn, alpha a) meets the destination d:
  *   NORMAL    s * a + d * (1 - a)       painting over
@@ -190,13 +200,18 @@ int32_t tse_set_fullscreen(int32_t on);
  * 3x5 glyphs in 4x6 cells (64x36); the names and sheet sizes are TSE_BUILTIN_FONT_SHEETS in protocol.ts.
  * Returns a handle >= 0, or -1 if it could not be loaded (a missing file, or a "tse:" name that is not built in). */
 int32_t tse_load_texture(const char *path);
-/* A shader for TSE_OP_LAYER_END, from a file holding one function, in GLSL (since ABI v11):
+/* A shader for TSE_OP_LAYER_END (since ABI v11) or TSE_OP_SPRITE_SHADED (since ABI v16), from a file holding one function, in GLSL:
  *
  *     vec4 effect(vec2 uv) { vec4 c = texture(image, uv); return vec4(c.rgb * (1.0 - 0.5 * length(pixel / resolution - 0.5)), c.a); }
  *
  * It is given `image` (the layer, a sampler2D; sample it at `uv`), `pixel` (where the pixel is, in target pixels from the top left),
  * `resolution` (the target's size in pixels), `time` (seconds, as the record gives it) and `params` (float[8], the record's
- * p0..p7), and returns the pixel's colour, which the tint then multiplies. libtse wraps the function in the shader language of the
+ * p0..p7), and returns the pixel's colour, which the tint then multiplies. Since ABI v16 it is also given `region` (a vec4: the
+ * part of `image` drawn, x, y, width and height in its pixels; on a layer, all of it), `turn` (a mat2 taking a direction in the
+ * image's pixels to the direction it is drawn in on the target, y down, with the record's rotation, the signs of its scale, its
+ * flips and the view's rotation, and no stretch: its transpose takes a direction on the target back into the image; on a layer,
+ * the identity) and `lookup` (a sampler2D, the record's lookup texture; on a layer, a white pixel). A file must not declare these
+ * names itself. libtse wraps the function in the shader language of the
  * platform, so the same file can serve another one. Returns a handle >= 0; -1 when the file is missing or does not compile (the
  * compiler's message is logged); TSE_SHADER_UNSUPPORTED when this build cannot run shaders (the software renderer), and a layer with
  * that handle is laid over without one. */
