@@ -1,8 +1,8 @@
 /**
  * The draw records of `native/include/tse.h`, executed with WebGL2: what `native/src/tse.c` does with raylib, done in the browser.
  * Each record is drawn as triangles, transformed on the CPU (the view, then the record's translate, rotate and scale), and batched
- * until the texture, the blend or the target changes. Layers and the canvas are framebuffers; a layer's shader is the author's
- * `effect` function wrapped for GLSL ES 3.00, as libtse wraps it for desktop GLSL.
+ * until the texture, the blend or the target changes. Layers and the canvas are framebuffers; a layer's or a shaded sprite's shader
+ * is the author's `effect` function wrapped for GLSL ES 3.00, as libtse wraps it for desktop GLSL.
  */
 import {
   TSE_BLEND_ADD,
@@ -32,6 +32,8 @@ import {
   TSE_OP_SPRITE_LEN,
   TSE_OP_SPRITE_REGION,
   TSE_OP_SPRITE_REGION_LEN,
+  TSE_OP_SPRITE_SHADED,
+  TSE_OP_SPRITE_SHADED_LEN,
   TSE_OP_TEXT,
   TSE_OP_TEXT_LEN,
   TSE_OP_VIEW,
@@ -59,12 +61,15 @@ export interface RendererAssets {
   text(text: string, size: number): GlTexture | null;
 }
 
-/** A compiled layer shader and where its inputs are. */
+/** A compiled shader (a layer's, or a shaded sprite's) and where its inputs are. */
 export interface LayerShader {
   readonly program: WebGLProgram;
   readonly resolution: WebGLUniformLocation | null;
   readonly time: WebGLUniformLocation | null;
   readonly params: WebGLUniformLocation | null;
+  readonly region: WebGLUniformLocation | null;
+  readonly turn: WebGLUniformLocation | null;
+  readonly lookup: WebGLUniformLocation | null;
   readonly targetSize: WebGLUniformLocation | null;
   readonly image: WebGLUniformLocation | null;
   readonly colDiffuse: WebGLUniformLocation | null;
@@ -101,7 +106,8 @@ void main() {
 
 /**
  * What wraps an author's `effect` function: the inputs it is given, and the main that calls it. The same names libtse gives it
- * (`image`, `pixel`, `resolution`, `time`, `params`), in GLSL ES 3.00; `#line 1` counts the compiler's lines in the author's file.
+ * (`image`, `pixel`, `resolution`, `time`, `params`, `region`, `turn`, `lookup`), in GLSL ES 3.00; `#line 1` counts the compiler's
+ * lines in the author's file. `turn` is a mat2 made from a vec4 of its columns, because libtse's raylib has no mat2 uniform.
  */
 export const SHADER_HEAD = `#version 300 es
 precision highp float;
@@ -113,9 +119,13 @@ uniform vec4 colDiffuse;
 uniform vec2 resolution;
 uniform float time;
 uniform float params[8];
+uniform vec4 region;
+uniform vec4 tseTurn;
+uniform sampler2D lookup;
 out vec4 finalColor;
 vec2 pixel;
 #define image texture0
+#define turn mat2(tseTurn.xy, tseTurn.zw)
 #line 1
 `;
 export const SHADER_TAIL = `
@@ -134,6 +144,8 @@ type Affine = [number, number, number, number, number, number];
 const IDENTITY: Affine = [1, 0, 0, 1, 0, 0];
 
 const WHITE: readonly number[] = [1, 1, 1, 1];
+/** `turn` for what is not turned: a layer, or a sprite drawn upright. */
+const IDENTITY_TURN: readonly number[] = [1, 0, 0, 1];
 
 /** A record field as an index or an op: -1 unless it is a whole number in range. */
 function toIndex(value: number): number {
@@ -176,6 +188,7 @@ export class WebRenderer {
   readonly #ringOuter = [0, 0, 0, 1];
   readonly #local: Affine = [1, 0, 0, 1, 0, 0];
   readonly #params = new Float32Array(8);
+  readonly #turnOut = [1, 0, 0, 1];
   /** Target pixels per unit the records use: the device pixel ratio for a window drawn at full density, 1 for the canvas and layers in it. */
   #scale = 1;
 
@@ -256,6 +269,9 @@ export class WebRenderer {
       resolution: gl.getUniformLocation(program, "resolution"),
       time: gl.getUniformLocation(program, "time"),
       params: gl.getUniformLocation(program, "params"),
+      region: gl.getUniformLocation(program, "region"),
+      turn: gl.getUniformLocation(program, "tseTurn"),
+      lookup: gl.getUniformLocation(program, "lookup"),
       targetSize: gl.getUniformLocation(program, "targetSize"),
       image: gl.getUniformLocation(program, "texture0"),
       colDiffuse: gl.getUniformLocation(program, "colDiffuse"),
@@ -660,37 +676,154 @@ export class WebRenderer {
       c[2]! *= c[3]!;
     }
     const shader = shaderHandle >= 0 ? this.#assets.shader(shaderHandle) : null;
-    const gl = this.gl;
     // The layer covers its target exactly: in units, its size over the scale.
     const w = this.#targetWidth / this.#scale,
       h = this.#targetHeight / this.#scale;
     if (shader !== null) {
-      gl.useProgram(shader.program);
-      gl.uniform2f(shader.targetSize, w, h);
-      // In units, as libtse gives it.
-      if (shader.resolution !== null) gl.uniform2f(shader.resolution, w, h);
-      if (shader.time !== null) gl.uniform1f(shader.time, time);
-      if (shader.colDiffuse !== null) gl.uniform4f(shader.colDiffuse, 1, 1, 1, 1);
-      if (shader.image !== null) gl.uniform1i(shader.image, 0);
-      if (shader.params !== null) {
-        const p = this.#params;
-        for (let i = 0; i < 8; i++) p[i] = params !== null && Number.isFinite(params[at + 5 + i]) ? (params[at + 5 + i] as number) : 0;
-        gl.uniform1fv(shader.params, p);
-      }
-      this.#program_ = shader.program;
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, layer.texture.texture);
-      this.#batchTexture = layer.texture;
+      this.#beginShader(shader, layer.texture, time, params, at + 5, 0, 0, this.#targetWidth, this.#targetHeight, IDENTITY_TURN, null);
       this.#quad(IDENTITY, 0, 0, w, h, 0, 1, 1, 0, c);
-      this.#flush();
-      this.#program_ = null;
-      this.#batchTexture = null;
+      this.#endShader();
     } else {
       this.#useTexture(layer.texture);
       this.#quad(IDENTITY, 0, 0, w, h, 0, 1, 1, 0, c);
       this.#flush();
     }
     this.#setBlend(this.#childBlend[this.#depth]!);
+  }
+
+  /**
+   * Draw what is quadded next through `shader`, sampling `image` (bound now), with its inputs: the target's size, `time`, the eight
+   * parameters at `records[from…]` (0 where missing or not finite), the region of the image drawn, how the image is turned (the
+   * columns of a 2x2 matrix) and the lookup texture (a white pixel for none). `#endShader` draws it.
+   */
+  #beginShader(
+    shader: LayerShader,
+    image: GlTexture,
+    time: number,
+    records: Float64Array | null,
+    from: number,
+    rx: number,
+    ry: number,
+    rw: number,
+    rh: number,
+    turn: readonly number[],
+    lookup: GlTexture | null
+  ): void {
+    this.#flush();
+    const gl = this.gl;
+    // In units, as libtse gives it.
+    const w = this.#targetWidth / this.#scale,
+      h = this.#targetHeight / this.#scale;
+    gl.useProgram(shader.program);
+    gl.uniform2f(shader.targetSize, w, h);
+    if (shader.resolution !== null) gl.uniform2f(shader.resolution, w, h);
+    if (shader.time !== null) gl.uniform1f(shader.time, time);
+    if (shader.colDiffuse !== null) gl.uniform4f(shader.colDiffuse, 1, 1, 1, 1);
+    if (shader.image !== null) gl.uniform1i(shader.image, 0);
+    if (shader.params !== null) {
+      const p = this.#params;
+      for (let i = 0; i < 8; i++) p[i] = records !== null && Number.isFinite(records[from + i]) ? (records[from + i] as number) : 0;
+      gl.uniform1fv(shader.params, p);
+    }
+    if (shader.region !== null) gl.uniform4f(shader.region, rx, ry, rw, rh);
+    if (shader.turn !== null) gl.uniform4f(shader.turn, turn[0]!, turn[1]!, turn[2]!, turn[3]!);
+    if (shader.lookup !== null) {
+      gl.uniform1i(shader.lookup, 1);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, (lookup ?? this.#white).texture);
+    }
+    this.#program_ = shader.program;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, image.texture);
+    this.#batchTexture = image;
+  }
+
+  /** Draw what `#beginShader` started, and go back to the plain program on the next draw. */
+  #endShader(): void {
+    this.#flush();
+    this.#program_ = null;
+    this.#batchTexture = null;
+  }
+
+  /**
+   * How a record's image is turned on the target, as the columns of a 2x2 matrix with no stretch (`turn` in tse.h): the view's
+   * linear part, then the record's rotation, then the signs of its scale and its flips, made a rotation or a reflection.
+   */
+  #turn(r: Float64Array, at: number, flags: number): readonly number[] {
+    const m = this.#view;
+    const rot = finite(r[at + 3]!);
+    const cos = Math.cos(rot),
+      sin = Math.sin(rot);
+    const fx = (r[at + 4]! < 0 ? -1 : 1) * (flags & TSE_SPRITE_FLIP_X ? -1 : 1);
+    const fy = (r[at + 5]! < 0 ? -1 : 1) * (flags & TSE_SPRITE_FLIP_Y ? -1 : 1);
+    let x0 = (m[0] * cos + m[2] * sin) * fx,
+      x1 = (m[1] * cos + m[3] * sin) * fx;
+    const y0 = (m[0] * -sin + m[2] * cos) * fy,
+      y1 = (m[1] * -sin + m[3] * cos) * fy;
+    const length = Math.hypot(x0, x1);
+    if (!(length > 0) || !Number.isFinite(length)) return IDENTITY_TURN;
+    x0 /= length;
+    x1 /= length;
+    // y is x turned a quarter, mirrored when the whole turns the image over.
+    const side = x0 * y1 - x1 * y0 < 0 ? -1 : 1;
+    const out = this.#turnOut;
+    out[0] = x0;
+    out[1] = x1;
+    out[2] = -x1 * side;
+    out[3] = x0 * side;
+    return out;
+  }
+
+  /**
+   * The region of a `TSE_OP_SPRITE_REGION` record, or of a `TSE_OP_SPRITE_SHADED` one (laid out the same up to the tint), from
+   * `tex`, batched with the plain program; or, `bound`, with the shader `#beginShader` bound it for.
+   */
+  #regionRecord(r: Float64Array, at: number, tex: GlTexture, flags: number, bound = false): void {
+    const w = r[at + 9]!,
+      h = r[at + 10]!;
+    if (!(w > 0 && h > 0)) return;
+    let ox = r[at + 11]!,
+      oy = r[at + 12]!;
+    if (flags & TSE_SPRITE_FLIP_X) ox = w - ox;
+    if (flags & TSE_SPRITE_FLIP_Y) oy = h - oy;
+    const sx = r[at + 7]!,
+      sy = r[at + 8]!;
+    // A flip swaps the texture coordinates along that axis.
+    const fx = (flags & TSE_SPRITE_FLIP_X) !== 0,
+      fy = (flags & TSE_SPRITE_FLIP_Y) !== 0;
+    if (!bound) this.#useTexture(tex);
+    let u0 = sx / tex.width,
+      u1 = (sx + w) / tex.width,
+      v0 = sy / tex.height,
+      v1 = (sy + h) / tex.height;
+    if (tex.flipped) {
+      v0 = 1 - v0;
+      v1 = 1 - v1;
+    }
+    if (fx) [u0, u1] = [u1, u0];
+    if (fy) [v0, v1] = [v1, v0];
+    this.#quad(this.#transform(r, at), -ox, -oy, -ox + w, -oy + h, u0, v0, u1, v1, unpack(r[at + 14]!, this.#color));
+  }
+
+  /** `TSE_OP_SPRITE_SHADED`: the region through its shader, or plainly when there is none. */
+  #shadedSprite(r: Float64Array, at: number): void {
+    const tex = this.#assets.texture(toIndex(r[at + 6]!));
+    if (tex === null) return;
+    let flags = toIndex(r[at + 13]!);
+    if (flags < 0) flags = 0;
+    flags &= ~TSE_SPRITE_SILHOUETTE;
+    const handle = toIndex(r[at + 15]!);
+    const shader = handle >= 0 ? this.#assets.shader(handle) : null;
+    if (shader === null) {
+      this.#regionRecord(r, at, tex, flags);
+      return;
+    }
+    const lookupHandle = toIndex(r[at + 16]!);
+    const lookup = lookupHandle >= 0 ? this.#assets.texture(lookupHandle) : null;
+    const turn = this.#turn(r, at, flags);
+    this.#beginShader(shader, tex, finite(r[at + 17]!), r, at + 18, r[at + 7]!, r[at + 8]!, r[at + 9]!, r[at + 10]!, turn, lookup);
+    this.#regionRecord(r, at, tex, flags, true);
+    this.#endShader();
   }
 
   // ---------- A frame ----------
@@ -846,6 +979,9 @@ export class WebRenderer {
         case TSE_OP_LIGHT:
           need = TSE_OP_LIGHT_LEN;
           break;
+        case TSE_OP_SPRITE_SHADED:
+          need = TSE_OP_SPRITE_SHADED_LEN;
+          break;
         case TSE_OP_CANVAS:
           this.#report("canvas record that is not first", at);
           break loop;
@@ -899,33 +1035,12 @@ export class WebRenderer {
           if (flags < 0) flags = 0;
           const handle = toIndex(r[at + 6]!);
           const tex = flags & TSE_SPRITE_SILHOUETTE ? this.#assets.silhouette(handle) : this.#assets.texture(handle);
-          if (tex === null) break;
-          const w = r[at + 9]!,
-            h = r[at + 10]!;
-          if (!(w > 0 && h > 0)) break;
-          let ox = r[at + 11]!,
-            oy = r[at + 12]!;
-          if (flags & TSE_SPRITE_FLIP_X) ox = w - ox;
-          if (flags & TSE_SPRITE_FLIP_Y) oy = h - oy;
-          const sx = r[at + 7]!,
-            sy = r[at + 8]!;
-          // A flip swaps the texture coordinates along that axis.
-          const fx = (flags & TSE_SPRITE_FLIP_X) !== 0,
-            fy = (flags & TSE_SPRITE_FLIP_Y) !== 0;
-          this.#useTexture(tex);
-          let u0 = sx / tex.width,
-            u1 = (sx + w) / tex.width,
-            v0 = sy / tex.height,
-            v1 = (sy + h) / tex.height;
-          if (tex.flipped) {
-            v0 = 1 - v0;
-            v1 = 1 - v1;
-          }
-          if (fx) [u0, u1] = [u1, u0];
-          if (fy) [v0, v1] = [v1, v0];
-          this.#quad(this.#transform(r, at), -ox, -oy, -ox + w, -oy + h, u0, v0, u1, v1, unpack(r[at + 14]!, c));
+          if (tex !== null) this.#regionRecord(r, at, tex, flags);
           break;
         }
+        case TSE_OP_SPRITE_SHADED:
+          this.#shadedSprite(r, at);
+          break;
         case TSE_OP_RECT:
           this.#rect(this.#transform(r, at), 0, 0, r[at + 6]!, r[at + 7]!, unpack(r[at + 8]!, c));
           break;

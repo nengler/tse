@@ -105,7 +105,7 @@ const DEFAULT_FPS = 10;
  * With a `sheet`, `frameWidth` and `frameHeight` and the text of `animations`, it plays the frames of the animation named by
  * `animation` from one image, each at its own rate, looping or once (see `SheetAnimation`). Either way `image` is what the
  * renderer draws (the current frame's file, or the sheet) and `sheetFrame` is the frame to cut from the sheet (-1 for files).
- * It takes the sprite options too (flips, origin, tint, opacity, flash). The mock draws nothing. Playing is not state: advancing a
+ * It takes the sprite options too (flips, origin, tint, opacity, flash, shader). The mock draws nothing. Playing is not state: advancing a
  * frame does not re-render anything, so an animation costs no renders.
  *
  * Setting `frames` to different contents restarts at the first frame; setting it to the same contents (a new array that is
@@ -132,6 +132,9 @@ export class AnimatedSprite<P extends object = {}> extends GameObject<P> impleme
   opacity: number;
   flash: number;
   flashColor: string;
+  shader: string;
+  params: readonly number[];
+  lookup: string;
   #frames: readonly string[];
   #animationsText: string | AnimationTable;
   /** What the animations were last read from, to tell a new table from the same one written again. */
@@ -159,6 +162,9 @@ export class AnimatedSprite<P extends object = {}> extends GameObject<P> impleme
     this.opacity = hostProps.opacity ?? 1;
     this.flash = hostProps.flash ?? 0;
     this.flashColor = hostProps.flashColor ?? "white";
+    this.shader = hostProps.shader ?? "";
+    this.params = hostProps.params ?? [];
+    this.lookup = hostProps.lookup ?? "";
     this.#animationsText = "";
     this.#animation = "";
     if (hostProps.animations !== undefined) this.animations = hostProps.animations;

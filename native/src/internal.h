@@ -16,7 +16,7 @@ bool assets_silhouette(int32_t handle, Texture2D *out);
 /* A shader from tse_load_shader, with the locations of its uniforms (-1 where the shader does not use one). */
 typedef struct {
   Shader shader;
-  int resolution, time, params;
+  int resolution, time, params, region, turn, lookup;
 } TseShader;
 bool assets_shader(int32_t handle, TseShader *out);
 void assets_play(int32_t handle, double volume);

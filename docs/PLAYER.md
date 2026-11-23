@@ -111,7 +111,7 @@ These sit beside the compiler's ([DESIGN.md](DESIGN.md#ground-rules-and-settled-
   the element's world transform (`x, y, rot, sx, sy`) and then its payload; the C side draws it at the local origin under translate,
   rotate, scale. Colours are packed `0xRRGGBBAA`. The ops: `VIEW` (the world → screen affine; a later one replaces it, which is how
   the HUD is drawn through a view that ignores the camera), `SPRITE`, `SPRITE_REGION` (a region of a sheet, with an origin, flips and
-  a tint), `RECT`, `ELLIPSE`, `BOX` (fill, border inside the edge, rounded corners), `TEXT`, `LIGHT`, `SCISSOR` / `SCISSOR_END`,
+  a tint), `SPRITE_SHADED` (a region drawn through a shader, ABI v16), `RECT`, `ELLIPSE`, `BOX` (fill, border inside the edge, rounded corners), `TEXT`, `LIGHT`, `SCISSOR` / `SCISSOR_END`,
   `CANVAS` (only first: draw the frame into a fixed-size texture and scale it into the window) and `LAYER_BEGIN` / `LAYER_END`
   (an off-screen layer, blended over its target, optionally through a shader).
 - **Input buffers**, written by `tse_frame`: `dt`, window size, mouse position, wheel and quit as doubles, and one byte of flags
@@ -145,7 +145,7 @@ tests stay byte-identical): `SPRITE_REGION` sits beside `SPRITE`, a `<Flex>` wit
   premultiplies the opacity into the tint on both renderers. rlsw stores a blended channel past 1 without clamping it, so it
   wrapped (an add past white went dark, and an add layer at an opacity turned a canvas's pixels transparent, showing the border
   through as black discs): `native/cmake/patch-rlsw.cmake`, raylib's `PATCH_COMMAND`, clamps it as the GPU does. rlsw has no shaders: `tse_load_shader` returns
-  `TSE_SHADER_UNSUPPORTED` (-2) and the layer is laid over without one, with a warning.
+  `TSE_SHADER_UNSUPPORTED` (-2) and the layer is laid over without one, or the shaded sprite drawn as its region, with a warning.
 - **Render targets.** raylib 6.0's `LoadRenderTexture` is refused by Mesa 25.x's llvmpipe and softpipe (an empty upload and an unsized
   depth buffer), so the GPU build makes its own targets (`load_target` in `tse.c`): a colour texture uploaded from zeroed pixels and
   no depth. Making or unloading a texture binds the window's framebuffer, so a layer's target is made only after the current target
@@ -157,6 +157,17 @@ tests stay byte-identical): `SPRITE_REGION` sits beside `SPRITE`, a `<Flex>` wit
   the top-left), `resolution`, `time` and `params[8]`, with `#line 1` so compiler messages count lines in the author's file. Only the
   function is the author's, so a WebGL build could wrap the same file in GLSL ES. `time` is the player's animation clock, so a replay
   draws the same frames.
+- **Shaded sprites** (ABI v16). `SPRITE_SHADED` is a `SPRITE_REGION` with a shader handle, a lookup texture handle and eight
+  parameters. The same file format serves a layer and a sprite: the wrapper also declares `region` (the part of the image drawn, in
+  its pixels), `turn` and `lookup` (a second texture on unit 1, raylib's default white texture when there is none). `turn` is how
+  the image is turned on the target with no stretch: the view's linear part times the record's rotation times the signs of its
+  scale and flips, its first column normalised and its second that turned a quarter (mirrored when the determinant is negative), so
+  it is always a rotation or a reflection and `transpose(turn)` inverts it. raylib has no mat2 uniform, so it goes up as a vec4
+  (`tseTurn`) and `turn` is a macro that builds the matrix. A layer gets the whole target as its region, the identity and a white
+  lookup. The record carries the animation clock as a layer's does, so a sprite with a shader is never copied from the last frame
+  (`shadedSprite` in `draw.ts` makes its walk volatile, as a layer's is). Each shaded sprite is its own
+  draw call (the batch is flushed before and after it), which is fine for tens of sprites, not thousands. The silhouette flag is
+  ignored on it: a flash is written as its own silhouette region after it.
 - **Lights** are discs drawn in rlgl's immediate mode as rings with a `(1 − d)²` falloff, premultiplied by their strength, so they need
   no texture and look the same on both renderers.
 - **Boxes** are built from exact pieces (edge rectangles, ring quarters in the corners), not raylib's rounded outline, which draws
@@ -262,8 +273,8 @@ import it, and nothing in the player, the runtime or libtse changed for it.
 
 - **Drawing** (`renderer.ts`) is `tse.c` again in WebGL2: every record becomes triangles transformed on the CPU (the view, then the
   record's translate, rotate and scale) and batched until the texture, blend or target changes. The canvas and layers are
-  framebuffers, blended with raylib's factors; a layer's shader is the author's `effect` wrapped for GLSL ES 3.00 with the same
-  names (`image`, `pixel`, `resolution`, `time`, `params`). Boxes, rings and lights are built as `draw_box` and `draw_light` build
+  framebuffers, blended with raylib's factors; a layer's or a shaded sprite's shader is the author's `effect` wrapped for GLSL ES 3.00
+  with the same names (`image`, `pixel`, `resolution`, `time`, `params`, `region`, `turn`, `lookup`). Boxes, rings and lights are built as `draw_box` and `draw_light` build
   them. Tower Defense's title screen comes out pixel for pixel as libtse draws it on the GPU.
 - **Assets** are fetched and decoded before the game starts (`preloadAssets`), because the player asks for a texture and its size in
   one synchronous call. Images are decoded without premultiplying or colour conversion. The built-in fonts are the sheets of

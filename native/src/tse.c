@@ -390,6 +390,29 @@ static bool begin_layer(uint32_t clear, int32_t child_blend) {
   return true;
 }
 
+/* Start drawing through a shader and give it its inputs: the target's size, `time`, the eight parameters (0 where missing or not
+ * finite), the region of the image drawn, how the image is turned (the columns of a 2x2 matrix) and the lookup texture (a white
+ * pixel when there is none). What is drawn next must be flushed before EndShaderMode, which binds the lookup texture with it. */
+static void begin_shader(const TseShader *shader, float time, const double *params, const float region[4], const float turn[4],
+                         int32_t lookup_handle) {
+  BeginShaderMode(shader->shader);
+  float resolution[2] = { (float)target.width / target.scale, (float)target.height / target.scale }; /* in logical pixels */
+  float p[8];
+  for (int i = 0; i < 8; i++) p[i] = params != NULL && isfinite(params[i]) ? (float)params[i] : 0.0f;
+  if (shader->resolution >= 0) SetShaderValue(shader->shader, shader->resolution, resolution, SHADER_UNIFORM_VEC2);
+  if (shader->time >= 0) SetShaderValue(shader->shader, shader->time, &time, SHADER_UNIFORM_FLOAT);
+  if (shader->params >= 0) SetShaderValueV(shader->shader, shader->params, p, SHADER_UNIFORM_FLOAT, 8);
+  if (shader->region >= 0) SetShaderValue(shader->shader, shader->region, region, SHADER_UNIFORM_VEC4);
+  if (shader->turn >= 0) SetShaderValue(shader->shader, shader->turn, turn, SHADER_UNIFORM_VEC4);
+  if (shader->lookup >= 0) {
+    Texture2D lookup;
+    if (!assets_texture(lookup_handle, &lookup)) lookup = (Texture2D){ rlGetTextureIdDefault(), 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
+    SetShaderValueTexture(shader->shader, shader->lookup, lookup);
+  }
+}
+
+static const float IDENTITY_TURN[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+
 static void end_layer(int32_t blend, uint32_t tint, int32_t shader_handle, float time, const double *params) {
   if (target.depth == 0) return;
   RenderTexture2D *layer = &state.layers[target.depth - 1];
@@ -412,13 +435,8 @@ static void end_layer(int32_t blend, uint32_t tint, int32_t shader_handle, float
   TseShader shader;
   bool shaded = assets_shader(shader_handle, &shader);
   if (shaded) {
-    BeginShaderMode(shader.shader);
-    float resolution[2] = { (float)target.width / target.scale, (float)target.height / target.scale }; /* in logical pixels */
-    float p[8];
-    for (int i = 0; i < 8; i++) p[i] = params != NULL && isfinite(params[i]) ? (float)params[i] : 0.0f;
-    if (shader.resolution >= 0) SetShaderValue(shader.shader, shader.resolution, resolution, SHADER_UNIFORM_VEC2);
-    if (shader.time >= 0) SetShaderValue(shader.shader, shader.time, &time, SHADER_UNIFORM_FLOAT);
-    if (shader.params >= 0) SetShaderValueV(shader.shader, shader.params, p, SHADER_UNIFORM_FLOAT, 8);
+    const float region[4] = { 0.0f, 0.0f, (float)target.width, (float)target.height };
+    begin_shader(&shader, time, params, region, IDENTITY_TURN, -1);
   }
   /* The destination is in the units drawing uses here, which the window's scale (or a parent layer's) takes to its pixels. */
   DrawTexturePro(layer->texture, (Rectangle){ 0.0f, 0.0f, (float)target.width, -(float)target.height },
@@ -461,6 +479,77 @@ static void draw_light(float radius, uint32_t packed) {
   rlEnd();
 }
 
+/* A TSE_OP_SPRITE_REGION (or the region part of a TSE_OP_SPRITE_SHADED, whose fields are laid out the same up to the tint), drawn
+ * from `texture` under the record's transform. */
+static void draw_region(const double *r, Texture2D texture, int32_t flags) {
+  float w = (float)r[9], h = (float)r[10];
+  if (!(w > 0.0f && h > 0.0f)) return;
+  /* A negative source size mirrors the region; the destination always starts at minus the origin. */
+  Rectangle source = { (float)r[7], (float)r[8], (flags & TSE_SPRITE_FLIP_X) ? -w : w, (flags & TSE_SPRITE_FLIP_Y) ? -h : h };
+  float ox = (float)r[11], oy = (float)r[12];
+  if (flags & TSE_SPRITE_FLIP_X) ox = w - ox;
+  if (flags & TSE_SPRITE_FLIP_Y) oy = h - oy;
+  Rectangle dest = { -ox, -oy, w, h };
+  push_transform(r);
+  DrawTexturePro(texture, source, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, unpack_color(to_color(r[14])));
+  rlPopMatrix();
+}
+
+/* How a record's image is turned on the target, as the columns of a 2x2 matrix with no stretch (see `turn` in tse.h): the view's
+ * linear part, then the record's rotation, then the signs of its scale and its flips, made a rotation or a reflection. */
+static void sprite_turn(const double *r, int32_t flags, float out[4]) {
+  float a = 1.0f, b = 0.0f, c = 0.0f, d = 1.0f; /* the view: x' = a x + c y, y' = b x + d y */
+  if (target.view_pushed) {
+    a = target.view[0];
+    b = target.view[1];
+    c = target.view[4];
+    d = target.view[5];
+  }
+  float rot = finite_or_zero((float)r[3]);
+  float cs = cosf(rot), sn = sinf(rot);
+  float fx = ((float)r[4] < 0.0f ? -1.0f : 1.0f) * ((flags & TSE_SPRITE_FLIP_X) ? -1.0f : 1.0f);
+  float fy = ((float)r[5] < 0.0f ? -1.0f : 1.0f) * ((flags & TSE_SPRITE_FLIP_Y) ? -1.0f : 1.0f);
+  /* The image's x and y axes on the target: view * rotation * the signs. */
+  float x0 = (a * cs + c * sn) * fx, x1 = (b * cs + d * sn) * fx;
+  float y0 = (a * -sn + c * cs) * fy, y1 = (b * -sn + d * cs) * fy;
+  float length = sqrtf(x0 * x0 + x1 * x1);
+  if (!(length > 0.0f) || !isfinite(length)) {
+    memcpy(out, IDENTITY_TURN, sizeof IDENTITY_TURN);
+    return;
+  }
+  x0 /= length;
+  x1 /= length;
+  /* y is x turned a quarter, mirrored when the whole turns the image over. */
+  float side = x0 * y1 - x1 * y0 < 0.0f ? -1.0f : 1.0f;
+  out[0] = x0;
+  out[1] = x1;
+  out[2] = -x1 * side;
+  out[3] = x0 * side;
+}
+
+/* TSE_OP_SPRITE_SHADED: the region through its shader, or plainly when the shader cannot run. */
+static void draw_shaded_sprite(const double *r) {
+  Texture2D texture;
+  if (!assets_texture(to_index(r[6]), &texture)) return;
+  int32_t flags = to_index(r[13]);
+  if (flags < 0) flags = 0;
+  flags &= ~TSE_SPRITE_SILHOUETTE;
+  TseShader shader;
+  bool shaded = assets_shader(to_index(r[15]), &shader);
+  if (shaded) {
+    rlDrawRenderBatchActive();
+    const float region[4] = { (float)r[7], (float)r[8], (float)r[9], (float)r[10] };
+    float turn[4];
+    sprite_turn(r, flags, turn);
+    begin_shader(&shader, isfinite(r[17]) ? (float)r[17] : 0.0f, r + 18, region, turn, to_index(r[16]));
+  }
+  draw_region(r, texture, flags);
+  if (shaded) {
+    rlDrawRenderBatchActive();
+    EndShaderMode();
+  }
+}
+
 static void execute_records(const double *records, int32_t length, const char *text, const int32_t *text_offsets, int32_t text_count) {
   target.depth = 0;
   target.child_blend[0] = TSE_BLEND_NORMAL;
@@ -484,6 +573,7 @@ static void execute_records(const double *records, int32_t length, const char *t
       case TSE_OP_LAYER_BEGIN: need = TSE_OP_LAYER_BEGIN_LEN; break;
       case TSE_OP_LAYER_END: need = TSE_OP_LAYER_END_LEN; break;
       case TSE_OP_LIGHT: need = TSE_OP_LIGHT_LEN; break;
+      case TSE_OP_SPRITE_SHADED: need = TSE_OP_SPRITE_SHADED_LEN; break;
       case TSE_OP_CANVAS: report_bad_frame("canvas record that is not first", at); goto done;
       default: report_bad_frame("unknown op", at); goto done;
     }
@@ -552,21 +642,12 @@ static void execute_records(const double *records, int32_t length, const char *t
         int32_t flags = to_index(r[13]);
         if (flags < 0) flags = 0;
         bool found = (flags & TSE_SPRITE_SILHOUETTE) ? assets_silhouette(to_index(r[6]), &texture) : assets_texture(to_index(r[6]), &texture);
-        if (found) {
-          float w = (float)r[9], h = (float)r[10];
-          if (!(w > 0.0f && h > 0.0f)) break;
-          /* A negative source size mirrors the region; the destination always starts at minus the origin. */
-          Rectangle source = { (float)r[7], (float)r[8], (flags & TSE_SPRITE_FLIP_X) ? -w : w, (flags & TSE_SPRITE_FLIP_Y) ? -h : h };
-          float ox = (float)r[11], oy = (float)r[12];
-          if (flags & TSE_SPRITE_FLIP_X) ox = w - ox;
-          if (flags & TSE_SPRITE_FLIP_Y) oy = h - oy;
-          Rectangle dest = { -ox, -oy, w, h };
-          push_transform(r);
-          DrawTexturePro(texture, source, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, unpack_color(to_color(r[14])));
-          rlPopMatrix();
-        }
+        if (found) draw_region(r, texture, flags);
         break;
       }
+      case TSE_OP_SPRITE_SHADED:
+        draw_shaded_sprite(r);
+        break;
       case TSE_OP_RECT: {
         push_transform(r);
         DrawRectangleV((Vector2){ 0.0f, 0.0f }, (Vector2){ (float)r[6], (float)r[7] }, unpack_color(to_color(r[8])));

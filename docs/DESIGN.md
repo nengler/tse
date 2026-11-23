@@ -2194,8 +2194,18 @@ cleared to the darkness, with the lights in it drawn with `childBlend="add"`, an
 - The compiler knows it from the manifest: a container, its `blend` and `childBlend` checked as literals, its props following state.
 - **Shaders** (2026-11-15, ABI v11) go on a layer, run as it is laid over: `<Layer shader="cave.glsl" params={[0.12]}>`. A shader is an
   asset like an image, one GLSL function `vec4 effect(vec2 uv)` that the engine wraps for its platform, so a game's shaders are not
-  tied to desktop GLSL. Not a shader on each sprite: a layer is already the off-screen picture a post-process needs, and a sprite with
-  an effect is a layer with one child. The software renderer runs none and says so ([PLAYER.md](PLAYER.md), "ABI v11").
+  tied to desktop GLSL. The software renderer runs none and says so ([PLAYER.md](PLAYER.md), "ABI v11").
+- **Shaders on a sprite** (2026-11-23, ABI v16): `<Sprite shader="fruit.glsl" lookup="ramps.png" params={[…]}>`, and the same on an
+  `<AnimatedSprite>`. At first a sprite with an effect was to be a layer with one child, but a layer sees the screen, not the sprite:
+  it cannot tell where a sprite's middle is or how far it has turned, and a screen-sized pass per sprite is too dear for a jar of
+  fruit. Lighting that stays put while a sprite rolls needs both, so a sprite's region can now go through a shader as it is drawn.
+  It is the same file format as a layer's, with three more inputs: `region` (the part of the image drawn), `turn` (how the image is
+  turned on the screen, a rotation or a mirror; `transpose(turn)` takes a screen direction such as "towards the light" into the
+  image) and `lookup` (a second image, for a colour table: shading that steps through chosen colours, warmer in the light and cooler
+  in the dark, rather than brightening). A record of its own (`SPRITE_SHADED`), not a state record around ordinary ones, for the
+  reason blend modes are not on sprites: the frame is sorted by `z` after it is written. It is given the game's `time`, as a layer
+  is, so a sprite's record with a shader is written again every frame rather than copied from the last: a shimmer or a pulse needs
+  no help from the game. That costs little, because shaded sprites are few and each is its own draw call anyway.
 - **Lights** (2026-11-15, ABI v12): `<Lighting ambient>` is a `Layer` subclass fixed to `multiply` over the world and `add` among its
   children, cleared to the ambient colour; `<Light radius color intensity>` is a leaf drawn as a native falloff (`TSE_OP_LIGHT`), so a
   light needs no image and looks the same in tests. No shadows: walls do not block light. A light outside a `<Lighting>` is drawn as a

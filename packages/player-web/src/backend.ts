@@ -199,7 +199,7 @@ export class WebBackend implements Backend {
       this.#shaders.push(this.#gl.compileLayerShader(file.text));
       return this.#shaders.length - 1;
     } catch (error) {
-      console.warn(`TSE: the shader ${path} did not compile: its layers are drawn without it.\n${String(error)}`);
+      console.warn(`TSE: the shader ${path} did not compile: what it shades is drawn without it.\n${String(error)}`);
       return -1;
     }
   }
