@@ -154,17 +154,26 @@ tests stay byte-identical): `SPRITE_REGION` sits beside `SPRITE`, a `<Flex>` wit
 - **Layers** nest `TSE_LAYER_MAX` (4) deep; each depth keeps one target between frames, remade when the size changes. A layer left
   open is closed at the end of the frame. Blend modes are normal, add, multiply and screen (`TSE_BLEND_*`).
 - **Shaders.** A shader file holds one GLSL function, `vec4 effect(vec2 uv)`. libtse wraps it in GLSL 3.30 with `image`, `pixel` (from
-  the top-left), `resolution`, `time` and `params[8]`, with `#line 1` so compiler messages count lines in the author's file. Only the
-  function is the author's, so a WebGL build could wrap the same file in GLSL ES. `time` is the player's animation clock, so a replay
-  draws the same frames.
+  the top-left), `resolution`, `time` and `params[32]` (eight before ABI v17), with `#line 1` so compiler messages count lines in the
+  author's file. Only the function is the author's, so a WebGL build could wrap the same file in GLSL ES. `time` is the player's
+  animation clock, so a replay draws the same frames.
+- **Places and params** (ABI v17). A shader is also given the view in force as its record is drawn (`tseView`, the linear part's
+  columns, and `tseShift`), from which the wrapper works out `place` (`pixel` taken back through the view: a `<Screen>`'s game pixels,
+  or the world under a camera), and `uvOf(p)`, which takes a place forward through the view to a pixel and then to the layer's `uv`
+  (`x / width`, `1 - y / height`: a layer is held bottom row first, on both renderers). Before, a full-screen shader worked out where
+  the game sat in the window itself, assuming it centred, and found which way up its texture was from `dFdy`. `pixel` is now in
+  logical pixels on a high-DPI window too (`tseScale`): it came from `gl_FragCoord`, in the framebuffer's pixels, while `resolution`
+  was logical. `LAYER_END` carries a `lookup` texture as `SPRITE_SHADED` does, and both carry `TSE_SHADER_PARAMS` (32) numbers,
+  which the player fills from `params` with lists laid out in place (`writeShaderParams`); `param2`/`param3`/`param4` read vectors
+  back. Past 32 the rest are left out, with a warning.
 - **Shaded sprites** (ABI v16). `SPRITE_SHADED` is a `SPRITE_REGION` with a shader handle, a lookup texture handle and eight
   parameters. The same file format serves a layer and a sprite: the wrapper also declares `region` (the part of the image drawn, in
   its pixels), `turn` and `lookup` (a second texture on unit 1, raylib's default white texture when there is none). `turn` is how
   the image is turned on the target with no stretch: the view's linear part times the record's rotation times the signs of its
   scale and flips, its first column normalised and its second that turned a quarter (mirrored when the determinant is negative), so
   it is always a rotation or a reflection and `transpose(turn)` inverts it. raylib has no mat2 uniform, so it goes up as a vec4
-  (`tseTurn`) and `turn` is a macro that builds the matrix. A layer gets the whole target as its region, the identity and a white
-  lookup. The record carries the animation clock as a layer's does, so a sprite with a shader is never copied from the last frame
+  (`tseTurn`) and `turn` is a macro that builds the matrix. A layer gets the whole target as its region, the identity and its own
+  lookup (a white one before ABI v17). The record carries the animation clock as a layer's does, so a sprite with a shader is never copied from the last frame
   (`shadedSprite` in `draw.ts` makes its walk volatile, as a layer's is). Each shaded sprite is its own
   draw call (the batch is flushed before and after it), which is fine for tens of sprites, not thousands. The silhouette flag is
   ignored on it: a flash is written as its own silhouette region after it.

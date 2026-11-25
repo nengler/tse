@@ -33,7 +33,7 @@ export const ASSET_PROPS: Readonly<Record<string, readonly string[]>> = {
   Text: ["font"],
   Game: ["font"],
   Music: ["src"],
-  Layer: ["shader"],
+  Layer: ["shader", "lookup"],
 };
 
 export interface AssetCheckOptions {

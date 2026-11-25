@@ -43,6 +43,7 @@ import {
   type Toggle,
   BUILTIN_FONTS,
   isBuiltinName,
+  type ShaderParams,
 } from "@tsengine/runtime";
 
 import { MAGENTA, mixColors, parseColor, type PackedColor } from "./color.ts";
@@ -74,6 +75,7 @@ import {
   TSE_SPRITE_FLIP_X,
   TSE_SPRITE_FLIP_Y,
   TSE_SPRITE_SILHOUETTE,
+  TSE_SHADER_PARAMS,
   TSE_OP_TEXT,
   TSE_OP_TEXT_LEN,
   TSE_OP_VIEW,
@@ -282,7 +284,27 @@ function recordLength(op: number): number {
   }
 }
 
-const NO_PARAMS: readonly number[] = [];
+const NO_PARAMS: ShaderParams = [];
+
+/**
+ * Write a shader's `params` into `TSE_SHADER_PARAMS` doubles of `r` from `at`: numbers as they are, a list's numbers one after
+ * another in its place, a number that is not finite as 0, and 0 for the rest. Returns how many numbers were given, which is more
+ * than were written when there were too many.
+ */
+export function writeShaderParams(r: Float64Array, at: number, params: ShaderParams): number {
+  let n = 0;
+  const put = (p: unknown): void => {
+    if (n < TSE_SHADER_PARAMS) r[at + n] = typeof p === "number" && Number.isFinite(p) ? p : 0;
+    n++;
+  };
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    if (typeof p === "object" && p !== null) for (let k = 0; k < p.length; k++) put(p[k]);
+    else put(p);
+  }
+  for (let k = n; k < TSE_SHADER_PARAMS; k++) r[at + k] = 0;
+  return n;
+}
 
 /** A `<Layer>`'s blend mode as the native side takes it. */
 function blendCode(mode: BlendMode): number {
@@ -824,7 +846,7 @@ export class DrawList {
 
   /**
    * A region drawn through a shader (`TSE_OP_SPRITE_SHADED`): `spriteRegion`'s fields, then the shader's handle, the lookup
-   * texture's (-1 for none), the `time` it is given and up to eight `params` (the rest 0).
+   * texture's (-1 for none), the `time` it is given and its `params` (see `writeShaderParams`, whose count it returns).
    */
   spriteShaded(
     world: WorldTransform,
@@ -840,10 +862,10 @@ export class DrawList {
     shader: number,
     lookup: number,
     time: number,
-    params: readonly number[]
-  ): void {
+    params: ShaderParams
+  ): number {
     if (this.alpha !== 1) {
-      if (this.alpha === 0) return;
+      if (this.alpha === 0) return 0;
       tint = fadeColor(tint, this.alpha);
     }
     const at = this.#header(TSE_OP_SPRITE_SHADED, TSE_OP_SPRITE_SHADED_LEN, world);
@@ -860,10 +882,7 @@ export class DrawList {
     r[at + 9] = shader;
     r[at + 10] = lookup;
     r[at + 11] = Number.isFinite(time) ? time : 0;
-    for (let i = 0; i < 8; i++) {
-      const p = params[i];
-      r[at + 12 + i] = typeof p === "number" && Number.isFinite(p) ? p : 0;
-    }
+    return writeShaderParams(r, at + 12, params);
   }
 
   rect(world: WorldTransform, width: number, height: number, color: PackedColor): void {
@@ -912,9 +931,10 @@ export class DrawList {
 
   /**
    * Close the innermost layer and lay it over what is under it with `blend`, at `opacity` times the opacity it is at, through `shader`
-   * (a handle, or -1 for none) given `time` and up to eight `params` (the rest 0).
+   * (a handle, or -1 for none) given `time`, its `params` (see `writeShaderParams`, whose count it returns) and the texture `lookup`
+   * (a handle, or -1 for none).
    */
-  layerEnd(blend: number, opacity: number, shader = -1, time = 0, params: readonly number[] = NO_PARAMS): void {
+  layerEnd(blend: number, opacity: number, shader = -1, time = 0, params: ShaderParams = NO_PARAMS, lookup = -1): number {
     // Back to the z the layer began at, so its end record goes with its begin, and what follows is ordered as before it.
     const z = this.#layerZs.pop();
     if (z !== undefined) this.setZ(z);
@@ -925,11 +945,9 @@ export class DrawList {
     r[at + 1] = blend;
     r[at + 2] = fadeColor(0xffffffff, Math.min(1, Math.max(0, opacity)) * this.alpha);
     r[at + 3] = shader;
-    r[at + 4] = time;
-    for (let i = 0; i < 8; i++) {
-      const p = params[i];
-      r[at + 5 + i] = typeof p === "number" && Number.isFinite(p) ? p : 0;
-    }
+    r[at + 4] = lookup;
+    r[at + 5] = time;
+    return writeShaderParams(r, at + 6, params);
   }
 
   /** A box with a border inside its edge and rounded corners: the record `TSE_OP_BOX`. A fill or border colour of 0 (no alpha) draws nothing. */
@@ -3248,10 +3266,27 @@ export class FrameBuilder {
     return handle < 0 ? -1 : handle;
   }
 
-  /** Close a `<Layer>`: its blend, its opacity and its shader. */
+  /** Close a `<Layer>`: its blend, its opacity, and its shader with its params and lookup. */
   #layerEnd(layer: Layer): void {
     const shader = this.#shader(layer.shader);
-    this.#list.layerEnd(blendCode(layer.blend), layer.opacity, shader, shader < 0 ? 0 : (this.#time ?? 0), layer.params);
+    const lookup = shader >= 0 && layer.lookup !== "" ? this.#texture(layer.lookup) : -1;
+    const given = this.#list.layerEnd(
+      blendCode(layer.blend),
+      layer.opacity,
+      shader,
+      shader < 0 ? 0 : (this.#time ?? 0),
+      layer.params,
+      lookup < 0 ? -1 : lookup
+    );
+    if (given > TSE_SHADER_PARAMS) this.#tooManyParams(`'${layer.shader}'`, given);
+  }
+
+  /** Say once for a shader (`'wall.glsl'`, or `of the sprite 'fruit.png'`) that it was given more numbers than a shader takes. */
+  #tooManyParams(shader: string, given: number): void {
+    this.#warner.once(
+      `params:${shader}`,
+      `The shader ${shader} was given ${given} params: a shader takes ${TSE_SHADER_PARAMS}, so the rest are left out.`
+    );
   }
 
   #texture(image: string): number {
@@ -3355,7 +3390,7 @@ export class FrameBuilder {
     flags = 0,
     shader = -1,
     lookup = -1,
-    params: readonly number[] = NO_PARAMS
+    params: ShaderParams = NO_PARAMS
   ): void {
     if (image === "") return;
     const handle = this.#texture(image);
@@ -3381,8 +3416,8 @@ export class FrameBuilder {
       return;
     }
     flags |= (flipX ? TSE_SPRITE_FLIP_X : 0) | (flipY ? TSE_SPRITE_FLIP_Y : 0);
-    if (shader >= 0)
-      this.#list.spriteShaded(
+    if (shader >= 0) {
+      const given = this.#list.spriteShaded(
         at,
         handle,
         srcX,
@@ -3398,7 +3433,8 @@ export class FrameBuilder {
         this.#time ?? 0,
         params
       );
-    else this.#list.spriteRegion(at, handle, srcX, srcY, frameWidth, frameHeight, originX, originY, flags, tint);
+      if (given > TSE_SHADER_PARAMS) this.#tooManyParams(`of the sprite '${image}'`, given);
+    } else this.#list.spriteRegion(at, handle, srcX, srcY, frameWidth, frameHeight, originX, originY, flags, tint);
   }
 
   /**

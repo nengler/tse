@@ -133,7 +133,7 @@ export {
   type SoundEntry,
 } from "./effects.ts";
 export { Fade, type FadeProps } from "./components/Fade.ts";
-export { BLEND_MODES, Layer, type BlendMode, type LayerProps } from "./components/Layer.ts";
+export { BLEND_MODES, Layer, type BlendMode, type LayerProps, type ShaderParams } from "./components/Layer.ts";
 export { Light, Lighting, type LightProps, type LightingProps } from "./components/Light.ts";
 export {
   call,

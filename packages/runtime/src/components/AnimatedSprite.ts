@@ -1,5 +1,6 @@
 import { GameObject } from "../GameObject.ts";
 import type { InputState } from "../input.ts";
+import type { ShaderParams } from "./Layer.ts";
 import { isStyled, type SpriteLook, type SpriteOptions } from "./Sprite.ts";
 
 export interface AnimatedSpriteProps extends SpriteOptions {
@@ -133,7 +134,7 @@ export class AnimatedSprite<P extends object = {}> extends GameObject<P> impleme
   flash: number;
   flashColor: string;
   shader: string;
-  params: readonly number[];
+  params: ShaderParams;
   lookup: string;
   #frames: readonly string[];
   #animationsText: string | AnimationTable;

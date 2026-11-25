@@ -151,18 +151,27 @@ static const char *SHADER_HEAD =
   "uniform vec4 colDiffuse;\n"
   "uniform vec2 resolution;\n"
   "uniform float time;\n"
-  "uniform float params[8];\n"
+  "uniform float params[32];\n"
   "uniform vec4 region;\n"
   "uniform vec4 tseTurn;\n"
   "uniform sampler2D lookup;\n"
+  "uniform float tseScale;\n"
+  "uniform vec4 tseView;\n"
+  "uniform vec2 tseShift;\n"
   "out vec4 finalColor;\n"
   "vec2 pixel;\n"
+  "vec2 place;\n"
   "#define image texture0\n"
   "#define turn mat2(tseTurn.xy, tseTurn.zw)\n"
+  "vec2 uvOf(vec2 p) { vec2 at = mat2(tseView.xy, tseView.zw) * p + tseShift; return vec2(at.x / resolution.x, 1.0 - at.y / resolution.y); }\n"
+  "vec2 param2(int i) { return vec2(params[i], params[i + 1]); }\n"
+  "vec3 param3(int i) { return vec3(params[i], params[i + 1], params[i + 2]); }\n"
+  "vec4 param4(int i) { return vec4(params[i], params[i + 1], params[i + 2], params[i + 3]); }\n"
   "#line 1\n";
 static const char *SHADER_TAIL =
   "\nvoid main() {\n"
-  "  pixel = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);\n"
+  "  pixel = vec2(gl_FragCoord.x, resolution.y * tseScale - gl_FragCoord.y) / tseScale;\n"
+  "  place = inverse(mat2(tseView.xy, tseView.zw)) * (pixel - tseShift);\n"
   "  finalColor = effect(fragTexCoord) * colDiffuse * fragColor;\n"
   "}\n";
 #endif
@@ -207,6 +216,9 @@ int32_t tse_load_shader(const char *path) {
     .region = GetShaderLocation(shader, "region"),
     .turn = GetShaderLocation(shader, "tseTurn"),
     .lookup = GetShaderLocation(shader, "lookup"),
+    .scale = GetShaderLocation(shader, "tseScale"),
+    .view = GetShaderLocation(shader, "tseView"),
+    .shift = GetShaderLocation(shader, "tseShift"),
   };
   return shaders.count++;
 #endif

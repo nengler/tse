@@ -176,6 +176,29 @@ describe("<Layer>", () => {
     assert.deepEqual(warnings, []);
   });
 
+  it("gives its shader a lookup texture, and lists among its params laid out in place, up to 32 (ABI v17)", () => {
+    const backend = new RecordingBackend({});
+    const params = [2, [10, 20, 0.5], [30, 40, 0.25], 7, ...Array.from({ length: 12 }, (_, i) => i + 100)];
+    const root = entity(layer({ shader: "blast.glsl", lookup: "apollo.png", params }, shape("red")));
+    const { records, warnings } = drawWith(backend, root, 1, { time: 1 });
+    const end = records.find((r) => r.op === "layerEnd") as { readonly params: readonly number[]; readonly lookup?: string };
+    assert.equal(end.lookup, "assets/apollo.png");
+    assert.deepEqual(end.params, [2, 10, 20, 0.5, 30, 40, 0.25, 7, ...Array.from({ length: 12 }, (_, i) => i + 100)]);
+    assert.deepEqual(warnings, []);
+  });
+
+  it("leaves out params past the 32nd, saying so once", () => {
+    const root = entity(layer({ shader: "many.glsl", params: [Array.from({ length: 40 }, (_, i) => i + 1)] }, shape("red")));
+    const { records, warnings } = drawWith(new RecordingBackend({}), root, 2);
+    const end = records.find((r) => r.op === "layerEnd") as { readonly params: readonly number[] };
+    assert.deepEqual(
+      end.params,
+      Array.from({ length: 32 }, (_, i) => i + 1)
+    );
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /'many\.glsl' was given 40 params: a shader takes 32/);
+  });
+
   it("draws the layer without a shader that could not be loaded, or where none can run, saying so once", () => {
     const missing = drawWith(
       new RecordingBackend({ missingShaders: ["assets/gone.glsl"] }),
