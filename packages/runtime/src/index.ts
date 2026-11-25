@@ -102,6 +102,7 @@ export {
   type FlexJustifyContent,
   type FlexOverflow,
   type FlexProps,
+  type LayoutBox,
   type FlexSizing,
   type FlexTransition,
 } from "./components/Flex.ts";

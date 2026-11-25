@@ -210,6 +210,22 @@ export interface FlexProps extends Omit<PressableProps, "onPress">, InputScopePr
    * value, as a slider does. The direction is used up, so the focus stays on the box; up and down still move it.
    */
   onAdjust?: (direction: number) => void;
+  /**
+   * Called with where the box was laid out, when that changes: its top-left corner in the coordinates its children are placed in
+   * at the top (under a `<Screen>`, the game's pixels; in a `<Hud>`, the HUD's) and its size, both as drawn (rotation left out).
+   * It is called at the start of the next step, before `useInput` and `useUpdate`, once the frame the box was laid out in is drawn:
+   * so a component keeps it in its `useMutable` and hands it to another that needs to know where the box is (a dark with a hole
+   * where the box is, an arrow pointing at it), a frame after it moved. A box not laid out yet is not reported.
+   */
+  onLayout?: (box: LayoutBox) => void;
+}
+
+/** Where a `<Flex>` was laid out, as `onLayout` is told: its top-left corner and its size. */
+export interface LayoutBox {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
 }
 
 /**
@@ -383,6 +399,9 @@ export class Flex<P extends object = {}> extends GameObject<P> {
   onDrag: ((x: number, y: number) => void) | undefined;
   onDragEnd: ((x: number, y: number) => void) | undefined;
   onPressOutside: (() => void) | undefined;
+  onLayout: ((box: LayoutBox) => void) | undefined;
+  /** What `onLayout` was last told (see `reportLayout`), or null before it was told anything. */
+  reportedLayout: LayoutBox | null = null;
   pressKey: string | undefined;
   focusable: boolean;
   autoFocus: boolean;
@@ -458,6 +477,7 @@ export class Flex<P extends object = {}> extends GameObject<P> {
     this.top = hostProps.top;
     this.bottom = hostProps.bottom;
     this.onPress = hostProps.onPress;
+    this.onLayout = hostProps.onLayout;
     this.onPointerEnter = hostProps.onPointerEnter;
     this.onPointerLeave = hostProps.onPointerLeave;
     this.onDragStart = hostProps.onDragStart;
@@ -515,6 +535,24 @@ export class Flex<P extends object = {}> extends GameObject<P> {
     const sin = Math.sin(t.rotation);
     out[0] = (dx * cos + dy * sin) / t.scaleX;
     out[1] = (dy * cos - dx * sin) / t.scaleY;
+  }
+
+  /**
+   * Tell `onLayout` where the box is, when that is not what it was last told: the world calls this at the start of each step for a
+   * box with an `onLayout`. A box with no size has not been laid out, and is not reported.
+   */
+  reportLayout(): void {
+    const onLayout = this.onLayout;
+    if (onLayout === undefined) return;
+    const t = this.worldTransform();
+    const width = (this.box.size[0] as number) * Math.abs(t.scaleX);
+    const height = (this.box.size[1] as number) * Math.abs(t.scaleY);
+    if (!(width > 0 || height > 0)) return;
+    const last = this.reportedLayout;
+    if (last !== null && last.x === t.x && last.y === t.y && last.width === width && last.height === height) return;
+    const box: LayoutBox = { x: t.x, y: t.y, width, height };
+    this.reportedLayout = box;
+    onLayout(box);
   }
 
   /** The middle of the laid-out box, in its layer's coordinates (scale and rotation ignored). */

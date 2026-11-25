@@ -68,6 +68,7 @@ Keyword props are checked by the compiler from the manifest's `intrinsicLiterals
 | `backgroundImage`, `slice`, `sliceTop` … `sliceLeft` | image, pixels | none, `0` | A nine-slice skin (see "Nine-slice backgrounds") |
 | `opacity` | 0 to 1 | `1` | See "Opacity" |
 | `onPress`, `pressKey`, `focusable`, `autoFocus`, `onFocus`, `onBlur`, `onAdjust`, `onPointerEnter`, `onPointerLeave` | | | Input, shared with `Pointer`: see DESIGN.md, "Buttons, menus and `onAdjust`" |
+| `onLayout` | `(box) => void` | none | Told where the box was laid out (`LayoutBox`: x, y, width, height), when that changes: see "Where a box was laid out" |
 
 A box with any `hover*` prop, a tooltip child or `onPress` takes the mouse; one without `onPress` lets a press through to what is
 under it. `<Button>`, `<Menu>`, `<Slider>`, `<Toggle>`, `<TextInput>` and `<Tooltip>` are `Flex` subclasses, so layout, state
@@ -193,6 +194,19 @@ the player's `walkTree` both apply them, and a test checks they agree.
 
 Layout runs inside the frame builder's one walk: when the walk reaches a layout root it lays out that root's `Flex` subtree, then
 draws each box's background as it reaches it and continues into the children. A game with no `Flex` pays one more `kindOf` case.
+
+### Where a box was laid out (2026-11-25)
+
+A component cannot read another's layout: there are no refs, and positions go up through callbacks. Jam Jar's tutorial dims
+everything but the part a lesson is about, and to cut the hole it repeated the amber frame's paddings and hard-coded the rent board's
+height. `<Flex onLayout={(box) => …}>` is the callback: the box's top-left corner (its world position, which is the game's pixels under a
+`<Screen>` and the HUD's in a `<Hud>`) and its laid-out size, both times its scale, rotation left out (`LayoutBox`).
+
+It is called by the world at the start of a step, before `onInput` (`World.tick`, for each registered `Flex` with an `onLayout`:
+`Flex.reportLayout`), not by the frame builder: the player builds a frame more than once in some steps (culling, the retained-frame
+check, placing colliders), and game code runs in steps, where a write renders as any other. So it hears where the box was in the frame
+drawn since the last step, a frame late, and only when that is not what it last heard; a box with no size, never laid out, says nothing.
+React Native's `onLayout` is the same shape and the same timing.
 
 ### Why a port, not a library
 
