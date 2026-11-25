@@ -2183,8 +2183,10 @@ cleared to the darkness, with the lights in it drawn with `childBlend="add"`, an
 
 - **A container, not a prop on each drawable.** A blend mode on a sprite would be a state change in the record stream, and the frame is
   sorted by `z` after it is written, which would move a sprite away from the state it needs. A layer's records are one block between a
-  begin and an end, so they move together. Inside one, `z` is ignored (`DrawList.setZ` does nothing while a layer is open) and children
-  draw in tree order; the layer as a whole has its own `z`.
+  begin and an end, so they move together, at the layer's own `z`. Inside one, children are put in `z` order among themselves
+  (2026-11-25; before, `z` was ignored there, so a full-screen shader, which needs the whole game in one layer, undid every `z` in the
+  game): `DrawList` keeps the `z` the list was at when each layer began, puts it back at the layer's end, and `sortByZ` orders each
+  layer's items, a nested layer being one item, within the layer they are in.
 - **The layer covers the target** (the screen, or the canvas under a `<Screen>`): its children are placed through the same view as
   anything else, so a light follows the world under the camera. A layer in a `<Hud>` works the same way through the HUD's view.
 - **Opacity applies once.** What is drawn inside a layer is drawn at full opacity; the opacity it is under, and its own, go on the end

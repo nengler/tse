@@ -314,6 +314,40 @@ function orderByZ(zs: readonly number[]): number[] | null {
   return order;
 }
 
+/**
+ * `orderByZ` for records some of which are layers: `ops` is each record's op and `zs` its z. Each run of a `TSE_OP_LAYER_BEGIN`
+ * to its matching `TSE_OP_LAYER_END` is one item at the begin's z among what is around it, and what is between them is put in
+ * order the same way among itself. A begin with no end runs to the end of the records.
+ */
+function nestedOrderByZ(ops: readonly number[], zs: readonly number[]): number[] {
+  const count = ops.length;
+  // Where each begin's end is (`count` when it has none), found with a stack of the begins still open.
+  const ends = new Array<number>(count).fill(-1);
+  const open: number[] = [];
+  for (let i = 0; i < count; i++) {
+    if (ops[i] === TSE_OP_LAYER_BEGIN) open.push(i);
+    else if (ops[i] === TSE_OP_LAYER_END && open.length > 0) ends[open.pop() as number] = i;
+  }
+  for (const begin of open) ends[begin] = count;
+  const out: number[] = [];
+  const place = (from: number, to: number): void => {
+    const items: number[] = [];
+    for (let i = from; i < to; i = ops[i] === TSE_OP_LAYER_BEGIN ? (ends[i] as number) + 1 : i + 1) items.push(i);
+    const itemZs = items.map((i) => zs[i] as number);
+    const order = orderByZ(itemZs);
+    for (let k = 0; k < items.length; k++) {
+      const i = items[order === null ? k : (order[k] as number)] as number;
+      out.push(i);
+      if (ops[i] !== TSE_OP_LAYER_BEGIN) continue;
+      const end = ends[i] as number;
+      place(i + 1, end);
+      if (end < count) out.push(end);
+    }
+  };
+  place(0, count);
+  return out;
+}
+
 /** The colour with its alpha multiplied by `alpha` (0 to 1), its red, green and blue as they were. */
 function fadeColor(color: PackedColor, alpha: number): PackedColor {
   return ((color & 0xffffff00) | Math.round((color & 255) * alpha)) >>> 0;
@@ -367,8 +401,11 @@ export class DrawList {
    */
   alpha = 1;
   readonly #alphas: number[] = [];
-  /** Layers open (`layerBegin`): inside one, `setZ` changes nothing, so a layer's records stay together, at its own z. */
-  #layerDepth = 0;
+  /**
+   * The z the list was at when each open layer began (`layerBegin`), innermost last. Inside a layer `setZ` orders the layer's own
+   * records among themselves; `layerEnd` puts the z back, and the layer's records move as one block, at the z it began at.
+   */
+  readonly #layerZs: number[] = [];
 
   /** Draw what is written from now on, until the matching `popAlpha`, at `alpha` times the opacity it is at: a faded box and all that is in it. */
   pushAlpha(alpha: number): void {
@@ -384,7 +421,7 @@ export class DrawList {
   reset(): void {
     this.alpha = 1;
     this.#alphas.length = 0;
-    this.#layerDepth = 0;
+    this.#layerZs.length = 0;
     this.length = 0;
     this.texts.length = 0;
     this.#zRuns.length = 0;
@@ -415,17 +452,18 @@ export class DrawList {
     this.#clipRuns.push(this.length, this.#clip);
   }
 
-  /** The draw order of the records written from now on. Only a change is kept, and none inside a layer. */
+  /** The draw order of the records written from now on, among those of the layer they are in (or of none). Only a change is kept. */
   setZ(z: number): void {
-    if (z === this.#z || this.#layerDepth > 0) return;
+    if (z === this.#z) return;
     this.#z = z;
     this.#zRuns.push(this.length, z);
   }
 
   /**
    * Put the records from `from` on in `z` order, lowest first, keeping tree order among equal values: what has a
-   * higher `z` is drawn later, so on top. The records before `from` (the view) and any written after the sort
-   * (the screen's bars) stay where they are. Text records refer to `texts` by index, so they move freely.
+   * higher `z` is drawn later, so on top. A layer's records (its begin, what is in it, its end) move as one, at the z it
+   * began at, and what is in it is put in `z` order among itself. The records before `from` (the view) and any written
+   * after the sort (the screen's bars) stay where they are. Text records refer to `texts` by index, so they move freely.
    */
   sortByZ(from: number, view: ViewTransform): void {
     if (this.#clipRuns.length > 0) this.#sortClipped(from, view);
@@ -465,7 +503,7 @@ export class DrawList {
       zs.push(z);
       clips.push(clip);
     }
-    const order = zRuns.length > 0 ? orderByZ(zs) : null;
+    const order = zRuns.length > 0 ? this.#order(starts, zs) : null;
     const rects = this.#clipRects(view);
     const total = this.length - from;
     const room = total + CLIP_RECORD_ROOM * (starts.length + 1);
@@ -583,7 +621,7 @@ export class DrawList {
       starts.push(at);
       zs.push(z);
     }
-    const order = orderByZ(zs);
+    const order = this.#order(starts, zs);
     if (order === null) return;
     const total = this.length - from;
     if (this.#scratch.length < total) this.#scratch = new Float64Array(Math.max(this.#scratch.length * 2, total));
@@ -597,6 +635,30 @@ export class DrawList {
       write += length;
     }
     for (let k = 0; k < total; k++) records[from + k] = scratch[k] as number;
+  }
+
+  /**
+   * The draw order of the records at `starts`, whose z values are `zs`: `orderByZ`'s, except that a layer's records keep together
+   * (see `sortByZ`). Null when they are in order already. Records in z order as they stand are in order whatever layers they are
+   * in, since a layer's own z is where its records begin, so only a frame that needs sorting is looked at for layers.
+   */
+  #order(starts: readonly number[], zs: readonly number[]): number[] | null {
+    const flat = orderByZ(zs);
+    if (flat === null) return null;
+    const records = this.records;
+    let layered = false;
+    for (let i = 0; i < starts.length; i++) {
+      if (records[starts[i] as number] === TSE_OP_LAYER_BEGIN) {
+        layered = true;
+        break;
+      }
+    }
+    return layered
+      ? nestedOrderByZ(
+          starts.map((at) => records[at] as number),
+          zs
+        )
+      : flat;
   }
 
   #reserve(count: number): number {
@@ -845,7 +907,7 @@ export class DrawList {
     this.records[at + 2] = childBlend;
     this.#alphas.push(this.alpha);
     this.alpha = 1;
-    this.#layerDepth++;
+    this.#layerZs.push(this.#z);
   }
 
   /**
@@ -853,7 +915,9 @@ export class DrawList {
    * (a handle, or -1 for none) given `time` and up to eight `params` (the rest 0).
    */
   layerEnd(blend: number, opacity: number, shader = -1, time = 0, params: readonly number[] = NO_PARAMS): void {
-    this.#layerDepth--;
+    // Back to the z the layer began at, so its end record goes with its begin, and what follows is ordered as before it.
+    const z = this.#layerZs.pop();
+    if (z !== undefined) this.setZ(z);
     this.alpha = this.#alphas.pop() as number;
     const at = this.#reserve(TSE_OP_LAYER_END_LEN);
     const r = this.records;
@@ -1927,7 +1991,7 @@ export class FrameBuilder {
       flatWalk = flat && !faded;
       if (kind === KIND_LAYER) {
         this.#layerEnd(node as Layer);
-        // Inside the layer `setZ` did nothing, whatever the children asked: the list is still at the layer's z.
+        // Closing the layer put the list back at the z it began at, the layer's own.
         listZ = drawZ;
       }
       if (kind === KIND_FLEX) {

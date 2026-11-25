@@ -34,8 +34,8 @@ export interface LayerProps extends EntityProps {
 /**
  * A container whose children are drawn off screen, into a layer the size of the screen, which is then laid over what is under it
  * with a blend mode: the way to darken a cave and light it again (`<Layer blend="multiply" clear="#202038" childBlend="add">`, its
- * children the lights), or to add a glow. Layers nest, four deep. Inside a layer, children are drawn in tree order: a `z` there is
- * ignored, and the layer as a whole is drawn at its own `z`.
+ * children the lights), or to add a glow. Layers nest, four deep. Inside a layer, children are drawn in `z` order among themselves, as
+ * anywhere else, and the layer as a whole is drawn at its own `z` among what is around it.
  */
 export class Layer<P extends object = {}> extends Entity<P> {
   static override readonly intrinsic = true;

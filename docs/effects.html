@@ -228,7 +228,7 @@ const x = useSpring(s.shown ? 0 : 24, { duration: 0.3, bounce: 0.15 });
     <li><code>clear</code> is what the layer holds before its children are drawn, every frame (transparent by default): the darkness of a light map.</li>
     <li><code>opacity</code> fades the whole layer, and an opacity above it applies to the layer as a whole, once.</li>
     <li>It is drawn through the same camera as the world (or the HUD's view, inside a <code>&lt;Hud&gt;</code>), so children are placed in world coordinates as usual. It covers the screen (the game's canvas under a <code>&lt;Screen&gt;</code>).</li>
-    <li>Inside a layer, children are drawn in tree order: a <code>z</code> there is ignored, and the layer as a whole is drawn at its own <code>z</code>. Layers nest four deep.</li>
+    <li>Inside a layer, children are drawn in <code>z</code> order among themselves, as they are anywhere else, and the layer as a whole is drawn at its own <code>z</code> among what is around it. Layers nest four deep.</li>
     <li>Bramble's cave is the example: <code>games/bramble/src/Play.tsx</code>, the lantern, the items still lying there (<code>glowsOf</code> in <code>rules/view.ts</code>) and the wisps as lights, and its picture in <code>stories/screenshots/Play/Cave.png</code>.</li>
     <li>Lights do not cast shadows: walls do not block them.</li>
   </ul>
