@@ -27,15 +27,24 @@ export class CodeWriter {
     return this.#origins;
   }
 
+  /**
+   * Write `text` at the current indentation. Text with line breaks in it (a multi-line expression, a copied declaration) is kept as
+   * the lines it makes, so that each line of the file has its own place here and an origin counts lines as the file does; only
+   * the first is indented, as the text is written.
+   */
   line(text: string): void {
-    if (text !== "" && this.#origin !== null) {
-      this.#origins.push({
-        line: this.#lines.length,
-        column: this.#indent * 2,
-        source: { line: this.#origin.line, column: this.#origin.column },
-      });
+    const parts = text.split("\n");
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      if (part !== "" && this.#origin !== null) {
+        this.#origins.push({
+          line: this.#lines.length,
+          column: i === 0 ? this.#indent * 2 : 0,
+          source: { line: this.#origin.line, column: this.#origin.column },
+        });
+      }
+      this.#lines.push(part === "" ? "" : i === 0 ? "  ".repeat(this.#indent) + part : part);
     }
-    this.#lines.push(text === "" ? "" : "  ".repeat(this.#indent) + text);
   }
 
   /** Write lines that come from `span` in the source; the origin before is back afterwards. */
@@ -80,19 +89,26 @@ export class CodeWriter {
 
   /** Put lines at a `mark`, with the indentation and origin it had; what was written after it moves down. */
   insert(mark: { readonly at: number; readonly indent: number; readonly origin: SourceSpan | null }, texts: readonly string[]): void {
-    if (texts.length === 0) return;
+    // One entry a line, as `line` keeps them: only the first line of a text with breaks in it is indented.
     const pad = "  ".repeat(mark.indent);
-    this.#lines.splice(mark.at, 0, ...texts.map((t) => (t === "" ? "" : pad + t)));
+    const lines: { readonly text: string; readonly column: number }[] = texts.flatMap((t) =>
+      t
+        .split("\n")
+        .map((part, i) =>
+          part === "" ? { text: "", column: 0 } : i === 0 ? { text: pad + part, column: pad.length } : { text: part, column: 0 }
+        )
+    );
+    if (lines.length === 0) return;
+    this.#lines.splice(mark.at, 0, ...lines.map((l) => l.text));
     let first = this.#origins.findIndex((o) => o.line >= mark.at);
     if (first === -1) first = this.#origins.length;
     for (let i = first; i < this.#origins.length; i++) {
       const o = this.#origins[i]!;
-      this.#origins[i] = { ...o, line: o.line + texts.length };
+      this.#origins[i] = { ...o, line: o.line + lines.length };
     }
     if (mark.origin !== null) {
-      const added = texts.flatMap((t, i) =>
-        t === "" ? [] : [{ line: mark.at + i, column: mark.indent * 2, source: { line: mark.origin!.line, column: mark.origin!.column } }]
-      );
+      const source = { line: mark.origin.line, column: mark.origin.column };
+      const added = lines.flatMap((l, i) => (l.text === "" ? [] : [{ line: mark.at + i, column: l.column, source }]));
       this.#origins.splice(first, 0, ...added);
     }
   }

@@ -10,7 +10,7 @@ import {
   type StateIR,
   type LocalId,
 } from "../ir/types.ts";
-import { collectDependencies, walkExpr } from "../ir/walk.ts";
+import { childExpressions, collectDependencies, walkExpr } from "../ir/walk.ts";
 import { param, escapeTemplate, mutableObject, pendingRef, propertyKey, typeText } from "./helpers.ts";
 import { CodeWriter } from "./writer.ts";
 
@@ -194,6 +194,34 @@ export class ExpressionEmitter {
     }
   }
 
+  /**
+   * `write()`, the code of a test and what it guards (`?:`'s branches, `&&`'s or `||`'s right), with each memo the test is sure to read
+   * and the rest reads too worked out once and handed in as a parameter (`(($n0) => $n0 !== null ? $n0.target : null)(this.$memo(…))`).
+   * A memo is a call, and TypeScript narrows nothing from one call to the next: `const lit = coached !== null ? coached.target : null`,
+   * `coached` a memo, read it twice and said the second could be null. A parameter narrows as the source's `const` does. An
+   * immediately called arrow's parameters take the types of its arguments. Only a memo the test is sure to read is moved out in
+   * front of it, so nothing is worked out that the source would not have.
+   */
+  protected narrowing(test: ExprIR, rest: readonly ExprIR[], write: () => string): string {
+    const read = new Set<string>();
+    for (const e of rest) memoKeysRead(e, read);
+    const bound = [...memosAlwaysRead(test).values()].filter(
+      (m) => read.has(m.key) && !this.mode.memoLocals.has(m.key) && (this.mode.inCallback || !this.mode.renderMemos.has(m.key))
+    );
+    if (bound.length === 0) return write();
+    const args = bound.map((m) => this.expr(m, true));
+    const memoLocals = new Map(this.mode.memoLocals);
+    const names = bound.map((m) => {
+      const name = `$n${this.narrowed++}`;
+      memoLocals.set(m.key, name);
+      return name;
+    });
+    return `((${names.join(", ")}) => ${this.within({ memoLocals }, write)})(${args.join(", ")})`;
+  }
+
+  /** How many memos `narrowing` has handed in as parameters, for each its own name. */
+  protected narrowed = 0;
+
   /** The lines `emit` writes, written to a writer of their own (relative to column 0) instead of the current one. */
   protected capture(emit: () => void): string[] {
     const outer = this.w;
@@ -355,9 +383,13 @@ export class ExpressionEmitter {
       case "New":
         return `new ${e.callee}${e.typeArguments ?? ""}(${e.args.map((a) => this.expr(a, true)).join(", ")})`;
       case "Binary":
+        if (e.operator === "&&" || e.operator === "||")
+          return this.narrowing(e.left, [e.right], () => wrap(`${this.expr(e.left)} ${e.operator} ${this.expr(e.right)}`));
         return wrap(`${this.expr(e.left)} ${e.operator} ${this.expr(e.right)}`);
       case "Conditional":
-        return wrap(`${this.expr(e.test)} ? ${this.expr(e.whenTrue)} : ${this.expr(e.whenFalse)}`);
+        return this.narrowing(e.test, [e.whenTrue, e.whenFalse], () =>
+          wrap(`${this.expr(e.test)} ? ${this.expr(e.whenTrue)} : ${this.expr(e.whenFalse)}`)
+        );
       case "Memo": {
         if (this.mode.inlineMemos) return this.expr(e.value, top);
         const local = this.mode.memoLocals.get(e.key) ?? (this.mode.inCallback ? undefined : this.mode.renderMemos.get(e.key));
@@ -413,6 +445,29 @@ export class ExpressionEmitter {
         return assertNever(e, "expression");
     }
   }
+}
+
+/**
+ * The memos `e` is sure to read when it is worked out, outermost first and each once: not those behind a `?:`'s branches, the
+ * right of `&&`, `||` or `??`, or in a function, which may never be read, and not those another memo reads in its own function.
+ */
+function memosAlwaysRead(
+  e: ExprIR,
+  found: Map<string, Extract<ExprIR, { kind: "Memo" }>> = new Map()
+): Map<string, Extract<ExprIR, { kind: "Memo" }>> {
+  if (e.kind === "Memo") {
+    if (!found.has(e.key)) found.set(e.key, e);
+  } else if (e.kind === "Conditional") memosAlwaysRead(e.test, found);
+  else if (e.kind === "Binary" && (e.operator === "&&" || e.operator === "||" || e.operator === "??")) memosAlwaysRead(e.left, found);
+  else if (e.kind !== "Arrow") for (const child of childExpressions(e)) memosAlwaysRead(child, found);
+  return found;
+}
+
+/** The keys of the memos `e` reads itself (not those only another memo reads in its own function). */
+function memoKeysRead(e: ExprIR, keys: Set<string> = new Set()): Set<string> {
+  if (e.kind === "Memo") keys.add(e.key);
+  else for (const child of childExpressions(e)) memoKeysRead(child, keys);
+  return keys;
 }
 
 /** The parts of `a && b && c`, or the expression itself. */

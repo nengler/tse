@@ -201,4 +201,31 @@ function Host({ onLog }: HostProps) {
     world.flush();
     assert.deepEqual(log, ["gone null"], "the callback ran, reading the state as it is now");
   });
+
+  it("a const that tests a memo for null and then reads it reads the memo once, so the test narrows it (Jam Jar: TS2531)", () => {
+    const r = compileProject({
+      "lessons.ts": `export interface Lesson { target: "jar" | "shelf" }
+export function lessonNow(step: number): Lesson | null { return step > 2 ? null : { target: "jar" }; }
+export function boxOf(target: "jar" | "shelf" | null): number { return target === null ? 0 : target.length; }
+`,
+      "Settings.tsx": `import { Entity, Text, useMutable } from "@tsengine/runtime/jsx";
+import { boxOf, lessonNow } from "./lessons.ts";
+export function Settings(props: { busy: boolean }) {
+  const s = useMutable({ step: 0 });
+  const lesson = props.busy ? null : lessonNow(s.step);
+  const lit = lesson !== null ? lesson.target : s.step > 5 ? "shelf" : null;
+  const named = lesson !== null && lesson.target === "jar";
+  return (
+    <Entity name="Settings">
+      <Text>{\`\${boxOf(lit)} \${named}\`}</Text>
+    </Entity>
+  );
+}
+`,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    // The memo is worked out once and handed to an arrow whose parameter the test narrows.
+    assert.match(r.out("Settings.ts"), /\(\(\$n\d+\) => \(?\$n\d+ !== null\)? \? \$n\d+\.target : /);
+    assert.match(r.out("Settings.ts"), /\(\(\$n\d+\) => \(?\$n\d+ !== null\)? && \(?\$n\d+\.target === "jar"/);
+  });
 });
