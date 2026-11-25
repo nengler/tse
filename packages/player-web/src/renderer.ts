@@ -34,6 +34,7 @@ import {
   TSE_OP_SPRITE_REGION_LEN,
   TSE_OP_SPRITE_SHADED,
   TSE_OP_SPRITE_SHADED_LEN,
+  TSE_SHADER_PARAMS,
   TSE_OP_TEXT,
   TSE_OP_TEXT_LEN,
   TSE_OP_VIEW,
@@ -70,6 +71,9 @@ export interface LayerShader {
   readonly region: WebGLUniformLocation | null;
   readonly turn: WebGLUniformLocation | null;
   readonly lookup: WebGLUniformLocation | null;
+  readonly scale: WebGLUniformLocation | null;
+  readonly view: WebGLUniformLocation | null;
+  readonly shift: WebGLUniformLocation | null;
   readonly targetSize: WebGLUniformLocation | null;
   readonly image: WebGLUniformLocation | null;
   readonly colDiffuse: WebGLUniformLocation | null;
@@ -106,8 +110,9 @@ void main() {
 
 /**
  * What wraps an author's `effect` function: the inputs it is given, and the main that calls it. The same names libtse gives it
- * (`image`, `pixel`, `resolution`, `time`, `params`, `region`, `turn`, `lookup`), in GLSL ES 3.00; `#line 1` counts the compiler's
- * lines in the author's file. `turn` is a mat2 made from a vec4 of its columns, because libtse's raylib has no mat2 uniform.
+ * (`image`, `pixel`, `place`, `resolution`, `time`, `params`, `region`, `turn`, `lookup`, `uvOf`, `param2` to `param4`), in GLSL ES
+ * 3.00; `#line 1` counts the compiler's lines in the author's file. `turn` is a mat2 made from a vec4 of its columns, because
+ * libtse's raylib has no mat2 uniform; the view is a vec4 of its linear part's columns and a vec2 of its shift, for the same reason.
  */
 export const SHADER_HEAD = `#version 300 es
 precision highp float;
@@ -118,19 +123,28 @@ uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 uniform vec2 resolution;
 uniform float time;
-uniform float params[8];
+uniform float params[${TSE_SHADER_PARAMS}];
 uniform vec4 region;
 uniform vec4 tseTurn;
 uniform sampler2D lookup;
+uniform float tseScale;
+uniform vec4 tseView;
+uniform vec2 tseShift;
 out vec4 finalColor;
 vec2 pixel;
+vec2 place;
 #define image texture0
 #define turn mat2(tseTurn.xy, tseTurn.zw)
+vec2 uvOf(vec2 p) { vec2 at = mat2(tseView.xy, tseView.zw) * p + tseShift; return vec2(at.x / resolution.x, 1.0 - at.y / resolution.y); }
+vec2 param2(int i) { return vec2(params[i], params[i + 1]); }
+vec3 param3(int i) { return vec3(params[i], params[i + 1], params[i + 2]); }
+vec4 param4(int i) { return vec4(params[i], params[i + 1], params[i + 2], params[i + 3]); }
 #line 1
 `;
 export const SHADER_TAIL = `
 void main() {
-  pixel = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
+  pixel = vec2(gl_FragCoord.x, resolution.y * tseScale - gl_FragCoord.y) / tseScale;
+  place = inverse(mat2(tseView.xy, tseView.zw)) * (pixel - tseShift);
   finalColor = effect(fragTexCoord) * colDiffuse * fragColor;
 }
 `;
@@ -187,7 +201,7 @@ export class WebRenderer {
   readonly #ringInner = [0, 0, 0, 1];
   readonly #ringOuter = [0, 0, 0, 1];
   readonly #local: Affine = [1, 0, 0, 1, 0, 0];
-  readonly #params = new Float32Array(8);
+  readonly #params = new Float32Array(TSE_SHADER_PARAMS);
   readonly #turnOut = [1, 0, 0, 1];
   /** Target pixels per unit the records use: the device pixel ratio for a window drawn at full density, 1 for the canvas and layers in it. */
   #scale = 1;
@@ -272,6 +286,9 @@ export class WebRenderer {
       region: gl.getUniformLocation(program, "region"),
       turn: gl.getUniformLocation(program, "tseTurn"),
       lookup: gl.getUniformLocation(program, "lookup"),
+      scale: gl.getUniformLocation(program, "tseScale"),
+      view: gl.getUniformLocation(program, "tseView"),
+      shift: gl.getUniformLocation(program, "tseShift"),
       targetSize: gl.getUniformLocation(program, "targetSize"),
       image: gl.getUniformLocation(program, "texture0"),
       colDiffuse: gl.getUniformLocation(program, "colDiffuse"),
@@ -658,6 +675,7 @@ export class WebRenderer {
     blend: number,
     tint: number,
     shaderHandle: number,
+    lookupHandle: number,
     time: number,
     params: Float64Array | null,
     at: number
@@ -680,7 +698,8 @@ export class WebRenderer {
     const w = this.#targetWidth / this.#scale,
       h = this.#targetHeight / this.#scale;
     if (shader !== null) {
-      this.#beginShader(shader, layer.texture, time, params, at + 5, 0, 0, this.#targetWidth, this.#targetHeight, IDENTITY_TURN, null);
+      const lookup = lookupHandle >= 0 ? this.#assets.texture(lookupHandle) : null;
+      this.#beginShader(shader, layer.texture, time, params, at + 6, 0, 0, this.#targetWidth, this.#targetHeight, IDENTITY_TURN, lookup);
       this.#quad(IDENTITY, 0, 0, w, h, 0, 1, 1, 0, c);
       this.#endShader();
     } else {
@@ -692,9 +711,10 @@ export class WebRenderer {
   }
 
   /**
-   * Draw what is quadded next through `shader`, sampling `image` (bound now), with its inputs: the target's size, `time`, the eight
-   * parameters at `records[from…]` (0 where missing or not finite), the region of the image drawn, how the image is turned (the
-   * columns of a 2x2 matrix) and the lookup texture (a white pixel for none). `#endShader` draws it.
+   * Draw what is quadded next through `shader`, sampling `image` (bound now), with its inputs: the target's size, `time`, the
+   * `TSE_SHADER_PARAMS` parameters at `records[from…]` (0 where missing or not finite), the region of the image drawn, how the image
+   * is turned (the columns of a 2x2 matrix), the lookup texture (a white pixel for none), the target's pixels per unit and the view.
+   * `#endShader` draws it.
    */
   #beginShader(
     shader: LayerShader,
@@ -722,11 +742,16 @@ export class WebRenderer {
     if (shader.image !== null) gl.uniform1i(shader.image, 0);
     if (shader.params !== null) {
       const p = this.#params;
-      for (let i = 0; i < 8; i++) p[i] = records !== null && Number.isFinite(records[from + i]) ? (records[from + i] as number) : 0;
+      for (let i = 0; i < TSE_SHADER_PARAMS; i++)
+        p[i] = records !== null && Number.isFinite(records[from + i]) ? (records[from + i] as number) : 0;
       gl.uniform1fv(shader.params, p);
     }
     if (shader.region !== null) gl.uniform4f(shader.region, rx, ry, rw, rh);
     if (shader.turn !== null) gl.uniform4f(shader.turn, turn[0]!, turn[1]!, turn[2]!, turn[3]!);
+    if (shader.scale !== null) gl.uniform1f(shader.scale, this.#scale);
+    const v = this.#view;
+    if (shader.view !== null) gl.uniform4f(shader.view, v[0], v[1], v[2], v[3]);
+    if (shader.shift !== null) gl.uniform2f(shader.shift, v[4], v[5]);
     if (shader.lookup !== null) {
       gl.uniform1i(shader.lookup, 1);
       gl.activeTexture(gl.TEXTURE1);
@@ -1008,7 +1033,7 @@ export class WebRenderer {
             this.#report("layer end with no layer open", at);
             break loop;
           }
-          this.#endLayer(base, blendOf(r[at + 1]!), r[at + 2]!, toIndex(r[at + 3]!), finite(r[at + 4]!), r, at);
+          this.#endLayer(base, blendOf(r[at + 1]!), r[at + 2]!, toIndex(r[at + 3]!), toIndex(r[at + 4]!), finite(r[at + 5]!), r, at);
           break;
         case TSE_OP_SCISSOR: {
           const w = r[at + 3]! > 0 && r[at + 3]! <= 1e9 ? r[at + 3]! : 0,
@@ -1066,7 +1091,7 @@ export class WebRenderer {
       at += need;
     }
     // A layer still open is closed as if by an END: laid over its target, normal, white.
-    while (this.#depth > 0) this.#endLayer(base, TSE_BLEND_NORMAL, 0xffffffff, -1, 0, null, 0);
+    while (this.#depth > 0) this.#endLayer(base, TSE_BLEND_NORMAL, 0xffffffff, -1, -1, 0, null, 0);
     this.#flush();
     this.#scissor = null;
     this.gl.disable(this.gl.SCISSOR_TEST);

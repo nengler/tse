@@ -2183,8 +2183,10 @@ cleared to the darkness, with the lights in it drawn with `childBlend="add"`, an
 
 - **A container, not a prop on each drawable.** A blend mode on a sprite would be a state change in the record stream, and the frame is
   sorted by `z` after it is written, which would move a sprite away from the state it needs. A layer's records are one block between a
-  begin and an end, so they move together. Inside one, `z` is ignored (`DrawList.setZ` does nothing while a layer is open) and children
-  draw in tree order; the layer as a whole has its own `z`.
+  begin and an end, so they move together, at the layer's own `z`. Inside one, children are put in `z` order among themselves
+  (2026-11-25; before, `z` was ignored there, so a full-screen shader, which needs the whole game in one layer, undid every `z` in the
+  game): `DrawList` keeps the `z` the list was at when each layer began, puts it back at the layer's end, and `sortByZ` orders each
+  layer's items, a nested layer being one item, within the layer they are in.
 - **The layer covers the target** (the screen, or the canvas under a `<Screen>`): its children are placed through the same view as
   anything else, so a light follows the world under the camera. A layer in a `<Hud>` works the same way through the HUD's view.
 - **Opacity applies once.** What is drawn inside a layer is drawn at full opacity; the opacity it is under, and its own, go on the end
@@ -2206,6 +2208,14 @@ cleared to the darkness, with the lights in it drawn with `childBlend="add"`, an
   reason blend modes are not on sprites: the frame is sorted by `z` after it is written. It is given the game's `time`, as a layer
   is, so a sprite's record with a shader is written again every frame rather than copied from the last: a shimmer or a pulse needs
   no help from the game. That costs little, because shaded sprites are few and each is its own draw call anyway.
+- **A layer's shader, as a full-screen one needs** (2026-11-25, ABI v17), from Jam Jar, whose whole screen goes through one: it pasted
+  its 46-colour palette into the shader as an array, because a layer had no `lookup`; it worked out where its 640 × 360 game sat in
+  the window, assuming it centred, because the shader saw only window pixels; and it held two blasts at once, because eight numbers
+  were all a shader got. A layer now takes `lookup`, a shader is given `place` (the pixel in the coordinates the layer's children are
+  placed in) and `uvOf` (where in the layer's image a place is, whichever way up the image is held), and `params` is up to 32 numbers,
+  a list among them laid out in place, read back with `param2`, `param3` or `param4`. A screen-level shader on `<Game>`, without a
+  layer, was the other way to go; with `z` working inside a layer (above) and these inputs, the layer does the job, and a second
+  way to shade the screen would be one more thing to learn.
 - **Lights** (2026-11-15, ABI v12): `<Lighting ambient>` is a `Layer` subclass fixed to `multiply` over the world and `add` among its
   children, cleared to the ambient colour; `<Light radius color intensity>` is a leaf drawn as a native falloff (`TSE_OP_LIGHT`), so a
   light needs no image and looks the same in tests. No shadows: walls do not block light. A light outside a `<Lighting>` is drawn as a

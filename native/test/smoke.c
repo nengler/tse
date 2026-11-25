@@ -70,14 +70,16 @@ static void text(double x, double y, int32_t index, double size, uint32_t color)
 static void scissor(double x, double y, double w, double h) { push(TSE_OP_SCISSOR); push(x); push(y); push(w); push(h); }
 static void scissor_end(void) { push(TSE_OP_SCISSOR_END); }
 static void layer_begin(uint32_t clear, int child_blend) { push(TSE_OP_LAYER_BEGIN); push(clear); push(child_blend); }
-static void layer_end_shaded(int blend, uint32_t tint, int32_t shader, double time, double p0) {
-  push(TSE_OP_LAYER_END); push(blend); push(tint); push(shader); push(time); push(p0);
-  for (int i = 1; i < 8; i++) push(0);
+/* A layer's end through `shader` with `lookup`, params[0] = p0 and params[far] = pfar (far > 0), the rest 0. */
+static void layer_end_lookup(int blend, uint32_t tint, int32_t shader, int32_t lookup, double time, double p0, int far, double pfar) {
+  push(TSE_OP_LAYER_END); push(blend); push(tint); push(shader); push(lookup); push(time); push(p0);
+  for (int i = 1; i < TSE_SHADER_PARAMS; i++) push(i == far ? pfar : 0);
 }
+static void layer_end_shaded(int blend, uint32_t tint, int32_t shader, double time, double p0) { layer_end_lookup(blend, tint, shader, -1, time, p0, 0, 0); }
 static void shaded(double x, double y, double rot, int32_t texture, double size, int flags, int32_t shader, int32_t lookup, double p0) {
   header(TSE_OP_SPRITE_SHADED, x, y, rot, 1, 1); push(texture); push(0); push(0); push(size); push(size); push(size / 2); push(size / 2);
   push(flags); push(WHITE_RGBA); push(shader); push(lookup); push(10); push(p0);
-  for (int i = 1; i < 8; i++) push(0);
+  for (int i = 1; i < TSE_SHADER_PARAMS; i++) push(0);
 }
 static void light(double x, double y, double radius, uint32_t color) { header(TSE_OP_LIGHT, x, y, 0, 1, 1); push(radius); push(color); }
 static void layer_end(int blend, uint32_t tint) { layer_end_shaded(blend, tint, -1, 0, 0); }
@@ -720,6 +722,26 @@ int main(void) {
     expect_near(20, 24, C_RED, "a view that mirrors the world undoes the half turn: the lookup half is on the left again");
     reset(); view(1, 0, 0, 1, 0, 0); shaded(24, 24, 0, square_tex, 16, 0, 999, lookup_tex, 1); frame();
     expect(24, 24, 0x0000ffffu, "an unknown shader handle draws the region plainly");
+    /* A layer's lookup, `place` and `uvOf`, and a parameter past the eighth (ABI v17), under a view that doubles the game. */
+    FILE *g = fopen("tse_smoke_place.glsl", "w");
+    fputs("vec4 effect(vec2 uv) {\n"
+          "  if (place.x < 4.0) return texture(lookup, vec2(0.5));\n"
+          "  if (params[20] == 1.0 && place.y >= 12.0 && place.y < 18.0) return texture(image, uvOf(place - param2(29)));\n"
+          "  return texture(image, uv);\n"
+          "}\n", g);
+    fclose(g);
+    int32_t place_shader = tse_load_shader("tse_smoke_place.glsl");
+    CHECK(place_shader >= 0, "load the place shader: %d", place_shader);
+    reset(); view(2, 0, 0, 2, 0, 0); layer_begin(0x00ff00ffu, TSE_BLEND_NORMAL); rect(0, 0, 0, 1, 1, 32, 12, 0x0000ffffu);
+    push(TSE_OP_LAYER_END); push(TSE_BLEND_NORMAL); push(WHITE_RGBA); push(place_shader); push(lookup_tex); push(0);
+    for (int i = 0; i < TSE_SHADER_PARAMS; i++) push(i == 20 ? 1 : i == 30 ? 12 : 0);
+    frame();
+    expect_near(4, 4, C_RED, "a layer's shader reads its lookup texture where `place`, in the view's units, is left of 4");
+    expect_near(4, 44, C_RED, "...all the way down");
+    expect_near(20, 4, 0x0000ffffu, "...and the layer elsewhere");
+    expect_near(20, 30, 0x0000ffffu, "uvOf finds what is 12 units up, the right way up, past the eighth parameter");
+    expect_near(20, 44, C_GREEN, "...and below that the layer is as it was");
+    remove("tse_smoke_place.glsl");
 #endif
     remove("tse_smoke_sprite.glsl");
     remove("tse_smoke_square.png");

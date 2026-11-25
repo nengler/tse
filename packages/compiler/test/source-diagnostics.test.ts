@@ -9,6 +9,7 @@ import { join, relative, resolve } from "node:path";
  */
 import { describe, it } from "node:test";
 
+import { CodeWriter } from "../src/generator/writer.ts";
 import { mapToSource, type CompilerDiagnostic } from "../src/index.ts";
 
 const repo = resolve(import.meta.dirname, "../../..");
@@ -28,6 +29,25 @@ function compileProject(files: Record<string, string>): { status: number | null;
 }
 
 describe("diagnostics in the source", () => {
+  it("counts each line of text written with line breaks in it, so what comes after maps to its own line (Jam Jar: an error on the wrong line)", () => {
+    const span = (line: number) => ({ fileName: "A.tsx", start: 0, end: 0, line, column: 3 });
+    const w = new CodeWriter();
+    w.open("class A {");
+    w.at(span(2), () => w.line("readonly pick = (n: number) =>\n  n > 2\n    ? null\n    : 1;"));
+    const mark = w.mark();
+    w.at(span(9), () => w.line("readonly sprite = new Sprite();"));
+    w.insert(mark, ["get s() {\n  return 1;\n}"]);
+    w.close();
+    const lines = w.toString().split("\n");
+    const at = (text: string) => lines.findIndex((l) => l.includes(text));
+    const origin = (line: number) => w.origins.find((o) => o.line === line)?.source.line;
+    assert.equal(origin(at("readonly sprite")), 9);
+    assert.equal(origin(at("? null")), 2);
+    assert.equal(lines[at("? null")], "    ? null", "a later line of the text is written as it is");
+    assert.equal(lines[at("get s()")], "  get s() {");
+    assert.equal(lines[at("return 1;")], "  return 1;");
+  });
+
   it("reports a type error in the source once, and does not check the generated code until the source passes", () => {
     const r = compileProject({
       "A.tsx": `import { Entity, Sprite, useMutable } from "@tsengine/runtime/jsx";

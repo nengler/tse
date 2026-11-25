@@ -271,6 +271,14 @@ useUpdate(() => {
   <Text>Start</Text>
 </Flex>
 </script></pre>
+  <p>To know where a box ended up, give it <code>onLayout</code>: it is told the box's top-left corner and size (<code>{ x, y, width, height }</code>, in the game's pixels under a <code>&lt;Screen&gt;</code>) whenever they change, at the start of the next step. Keep it in a <code>useMutable</code> and hand it to whatever needs it, instead of adding up paddings and heights by hand:</p>
+<pre class="code" data-lang="tsx"><script type="text/plain">
+const s = useMutable({ rent: null as LayoutBox | null });
+…
+<RentBoard onLayout={(box) => { s.rent = box; }} />
+{lesson === "rent" && s.rent !== null && <Dim hole={s.rent} />}
+</script></pre>
+  <p>It hears a frame late (the box is laid out as the frame is drawn, after the step), so something that follows a moving box trails it by a frame. A box that is not laid out yet is not reported.</p>
   <p><code>&lt;Slider&gt;</code> and <code>&lt;Toggle&gt;</code> are two controls that are <code>Flex</code> boxes with parts drawn in them, so they are sized, laid out, clipped, faded, disabled and styled like any other. A slider is <code>&lt;Slider value={s.volume} min={0} max={10} step={1} onChange={(v) => { s.volume = v; }} /&gt;</code>: a press puts the thumb under the mouse, a drag moves it (even once the mouse has left the box), and when it has the focus the left and right keys move it one step (a twentieth of the range with no <code>step</code>) while up and down move the focus on. The track is its <code>background</code>, so it takes a border, a radius, an image and a colour for each state; <code>fillColor</code> is the part left of the thumb. A toggle is <code>&lt;Toggle checked={s.sound} onChange={(on) => { s.sound = on; }} /&gt;</code>: a press, the confirm key or its <code>pressKey</code> flips it. Each moves its own value and then calls <code>onChange</code> with the new one, only when it is different, so <code>value</code> and <code>checked</code> give the starting value and any value you set later. Both take the focus by default.</p>
 <pre class="code" data-lang="tsx"><script type="text/plain">
 <Flex direction="column" gap={8} padding={10}>

@@ -1,4 +1,5 @@
 import { GameObject } from "../GameObject.ts";
+import type { ShaderParams } from "./Layer.ts";
 
 /** What can change how a sprite is drawn, beyond which image it is. All optional; a sprite that sets none is drawn plainly, as it always was. */
 export interface SpriteOptions {
@@ -29,8 +30,8 @@ export interface SpriteOptions {
    * The software renderer runs none, and draws the sprite as it is.
    */
   shader?: string;
-  /** Up to eight numbers the shader reads as `params[0]` to `params[7]`; the rest are 0. */
-  params?: readonly number[];
+  /** Up to 32 numbers the shader reads as `params[0]` to `params[31]` (the rest are 0); a list among them is laid out in place. See `ShaderParams`. */
+  params?: ShaderParams;
   /** An image under `assets/` the shader reads as `lookup` (a colour table, say); without one, `lookup` is a white pixel. */
   lookup?: string;
 }
@@ -55,7 +56,7 @@ export interface SpriteLook {
   readonly flash: number;
   readonly flashColor: string;
   readonly shader: string;
-  readonly params: readonly number[];
+  readonly params: ShaderParams;
   readonly lookup: string;
 }
 
@@ -89,7 +90,7 @@ export class Sprite<P extends object = {}> extends GameObject<P> implements Spri
   flash: number;
   flashColor: string;
   shader: string;
-  params: readonly number[];
+  params: ShaderParams;
   lookup: string;
 
   /** `props` and `defaults` are the component's own (see `GameObject`); `hostProps` are this element's. */

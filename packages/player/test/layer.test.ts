@@ -79,10 +79,57 @@ describe("<Layer>", () => {
     assert.deepEqual(ops(draw(outer)), ["begin #00000000 normal", "#ff0000ff", "end normal #ffffff40"]);
   });
 
-  it("keeps its records together at its own z, whatever z its children ask for, and the next sibling at its own", () => {
+  it("keeps its records together at its own z, and puts its children in z order among themselves", () => {
     const root = entity(shape("blue", 2), layer({ blend: "add" }, shape("red", 5), shape("white", -3)), shape("green", 1));
-    // The layer is at z 0: before green (1) and blue (2). Inside, tree order: red, then white, though white asked for -3.
-    assert.deepEqual(ops(draw(root)), ["begin #00000000 normal", "#ff0000ff", "#ffffffff", "end add #ffffffff", "#008000ff", "#0000ffff"]);
+    // The layer is at z 0: before green (1) and blue (2), though red inside it asked for 5. Inside, white (-3) goes under red (5).
+    assert.deepEqual(ops(draw(root)), ["begin #00000000 normal", "#ffffffff", "#ff0000ff", "end add #ffffffff", "#008000ff", "#0000ffff"]);
+  });
+
+  it("orders by z inside a layer that holds the whole game, as it would be without the layer", () => {
+    const game = (): GameObject[] => [shape("red", 3), entity(shape("white", 1), shape("yellow")), shape("green", -1), shape("blue")];
+    const plain = ops(draw(entity(...game())));
+    assert.deepEqual(plain, ["#008000ff", "#ffff00ff", "#0000ffff", "#ffffffff", "#ff0000ff"]);
+    assert.deepEqual(ops(draw(entity(layer({ shader: "screen.glsl" }, ...game())))), [
+      "begin #00000000 normal",
+      ...plain,
+      "end normal #ffffffff",
+    ]);
+  });
+
+  it("orders each layer by z within the layer it is in, a nested layer moving as one at its own z", () => {
+    const inner = layer({ blend: "add" }, shape("red", 2), shape("white", -2));
+    inner.transform.z = 1;
+    const root = entity(layer({}, shape("blue", 4), inner, shape("green")));
+    // The outer layer: green (0), then the inner layer (1, white under red, both kept inside it), then blue (4).
+    assert.deepEqual(ops(draw(root)), [
+      "begin #00000000 normal",
+      "#008000ff",
+      "begin #00000000 normal",
+      "#ffffffff",
+      "#ff0000ff",
+      "end add #ffffffff",
+      "#0000ffff",
+      "end normal #ffffffff",
+    ]);
+  });
+
+  it("goes back to its own z after its children, so a later sibling is ordered against the layer, not against its last child", () => {
+    const l = layer({ blend: "add" }, shape("red", 5));
+    l.transform.z = 2;
+    // yellow (3) after the layer (2), though the layer's child asked for 5; white (1) before it.
+    assert.deepEqual(ops(draw(entity(l, shape("yellow", 3), shape("white", 1)))), [
+      "#ffffffff",
+      "begin #00000000 normal",
+      "#ff0000ff",
+      "end add #ffffffff",
+      "#ffff00ff",
+    ]);
+  });
+
+  it("orders by z inside a layer in a HUD", () => {
+    const hud = new Hud();
+    hud.addChild(layer({}, shape("red", 2), shape("white")));
+    assert.deepEqual(ops(draw(entity(hud))), ["begin #00000000 normal", "#ffffffff", "#ff0000ff", "end normal #ffffffff"]);
   });
 
   it("nests", () => {
@@ -127,6 +174,29 @@ describe("<Layer>", () => {
     });
     assert.deepEqual(backend.shaderLoads, ["assets/cave.glsl"], "loaded once, for two frames");
     assert.deepEqual(warnings, []);
+  });
+
+  it("gives its shader a lookup texture, and lists among its params laid out in place, up to 32 (ABI v17)", () => {
+    const backend = new RecordingBackend({});
+    const params = [2, [10, 20, 0.5], [30, 40, 0.25], 7, ...Array.from({ length: 12 }, (_, i) => i + 100)];
+    const root = entity(layer({ shader: "blast.glsl", lookup: "apollo.png", params }, shape("red")));
+    const { records, warnings } = drawWith(backend, root, 1, { time: 1 });
+    const end = records.find((r) => r.op === "layerEnd") as { readonly params: readonly number[]; readonly lookup?: string };
+    assert.equal(end.lookup, "assets/apollo.png");
+    assert.deepEqual(end.params, [2, 10, 20, 0.5, 30, 40, 0.25, 7, ...Array.from({ length: 12 }, (_, i) => i + 100)]);
+    assert.deepEqual(warnings, []);
+  });
+
+  it("leaves out params past the 32nd, saying so once", () => {
+    const root = entity(layer({ shader: "many.glsl", params: [Array.from({ length: 40 }, (_, i) => i + 1)] }, shape("red")));
+    const { records, warnings } = drawWith(new RecordingBackend({}), root, 2);
+    const end = records.find((r) => r.op === "layerEnd") as { readonly params: readonly number[] };
+    assert.deepEqual(
+      end.params,
+      Array.from({ length: 32 }, (_, i) => i + 1)
+    );
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /'many\.glsl' was given 40 params: a shader takes 32/);
   });
 
   it("draws the layer without a shader that could not be loaded, or where none can run, saying so once", () => {

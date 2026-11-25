@@ -69,6 +69,8 @@ export class World implements BodySpace, BallSpace {
   readonly #modals: GameObject[] = [];
   /** Every `<Pointer>` and `<Flex>` in this world: what a `pressKey`, the focus and the confirm key look through. */
   readonly #pressables = new Set<GameObject & Pressable>();
+  /** Every `<Flex>` (anything with `reportLayout`): each step those with an `onLayout` are told where they were laid out. */
+  readonly #boxes = new Set<GameObject & { onLayout: unknown; reportLayout(): void }>();
   #focused: (GameObject & Pressable) | null = null;
   /** What had the focus when a modal made it inert, to give it back when it can take it again (as a browser does when a dialog closes). */
   #focusBeforeInert: (GameObject & Pressable) | null = null;
@@ -123,6 +125,8 @@ export class World implements BodySpace, BallSpace {
       const last = input.lastPressed?.();
       if (last !== undefined) setInputDevice(inputDeviceOf(last));
     }
+    // Where boxes were laid out in the frame drawn since the last step, for those that asked (`onLayout`), before anyone hears input.
+    if (this.#boxes.size > 0) for (const box of [...this.#boxes]) if (box.onLayout !== undefined && box.world === this) box.reportLayout();
     if (this.#pressables.size > 0 && input !== NO_INPUT) this.#keys(input, anyInert);
     const order = (this.#order ??= this.#treeOrder());
     const inputs = order.input;
@@ -777,6 +781,7 @@ export class World implements BodySpace, BallSpace {
       this.#indexes = null;
     } else if (object instanceof Tilemap) this.#tilemaps.add(object);
     if ("pressKey" in object && "focusable" in object) this.#pressables.add(object as GameObject & Pressable);
+    if ("reportLayout" in object) this.#boxes.add(object as GameObject & { onLayout: unknown; reportLayout(): void });
     object.worldHandlers = 0;
     if (object.onInput !== GameObject.prototype.onInput) {
       this.#onInput.add(object);
@@ -796,6 +801,7 @@ export class World implements BodySpace, BallSpace {
       this.#indexes = null;
     } else if (object instanceof Tilemap) this.#tilemaps.delete(object);
     this.#pressables.delete(object as GameObject & Pressable);
+    this.#boxes.delete(object as GameObject & { onLayout: unknown; reportLayout(): void });
     if (this.#focused === object) this.#focused = null;
     if (this.#pressed === (object as unknown as Pressable)) this.#pressed = null;
     if (this.#heldPress?.pointer === (object as unknown as Pressable)) this.#heldPress = null;

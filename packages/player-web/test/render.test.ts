@@ -22,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The page's script: draws each case into the window and returns the pixels asked for, RGBA, from the top left. */
 const PAGE = `
 import { TSE_OP_RECT, TSE_OP_BOX, TSE_OP_SPRITE_REGION, TSE_OP_LAYER_BEGIN, TSE_OP_LAYER_END, TSE_OP_SCISSOR, TSE_OP_SCISSOR_END,
-  TSE_OP_CANVAS, TSE_OP_VIEW, TSE_OP_SPRITE_SHADED, TSE_BLEND_MULTIPLY, TSE_BLEND_NORMAL } from "@tsengine/player";
+  TSE_OP_CANVAS, TSE_OP_VIEW, TSE_OP_SPRITE_SHADED, TSE_BLEND_MULTIPLY, TSE_BLEND_NORMAL, TSE_SHADER_PARAMS } from "@tsengine/player";
 import { WebRenderer } from "./src/renderer.ts";
 
 const canvas = document.createElement("canvas");
@@ -64,7 +64,7 @@ out.regionFlipped = pixel(0, 0);
 
 // A grey multiply layer over a white rectangle halves it.
 draw([TSE_OP_RECT, ...T, 64, 64, 0xffffffff, TSE_OP_LAYER_BEGIN, 0x808080ff, TSE_BLEND_NORMAL,
-  TSE_OP_LAYER_END, TSE_BLEND_MULTIPLY, 0xffffffff, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  TSE_OP_LAYER_END, TSE_BLEND_MULTIPLY, 0xffffffff, -1, -1, 0, ...new Array(TSE_SHADER_PARAMS).fill(0)]);
 out.multiplied = pixel(32, 32);
 
 // A scissor clips what follows to its rectangle.
@@ -92,7 +92,7 @@ shaders.push(renderer.compileLayerShader([
 textures.push(renderer.makeTexture(16, 16, new Uint8Array(16 * 16 * 4).fill(255), false)); // 1: a white square
 textures.push(renderer.makeTexture(1, 1, new Uint8Array([255, 0, 0, 255]), false)); // 2: the lookup, red
 const shaded = (x, y, rot, flags, shader, lookup) => [TSE_OP_SPRITE_SHADED, x, y, rot, 1, 1, 1, 0, 0, 16, 16, 8, 8, flags, 0xffffffff,
-  shader, lookup, 10, 1, 0, 0, 0, 0, 0, 0, 0];
+  shader, lookup, 10, 1, ...new Array(TSE_SHADER_PARAMS - 1).fill(0)];
 draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, 2)]);
 out.shadedLookup = pixel(20, 24); out.shadedParam = pixel(28, 24); out.shadedOut = pixel(4, 4);
 draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, -1)]);
@@ -108,6 +108,24 @@ out.shadedNoShader = pixel(24, 24);
 // After a shaded sprite, a plain region is drawn with the plain program again.
 draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...shaded(24, 24, 0, 0, 0, 2), TSE_OP_SPRITE_REGION, ...at(0, 0), 0, 0, 0, 2, 1, 0, 0, 0, 0xffffffff]);
 out.afterShaded = pixel(0, 0);
+
+// A layer's lookup, place and uvOf, and a parameter past the eighth (ABI v17), as native/test/smoke.c draws them: the lookup's
+// colour where place.x < 4; where 12 <= place.y < 18, what is 12 units up (params[29], params[30]), found with uvOf; else the layer.
+shaders.push(renderer.compileLayerShader([
+  "vec4 effect(vec2 uv) {",
+  "  if (place.x < 4.0) return texture(lookup, vec2(0.5));",
+  "  if (params[20] == 1.0 && place.y >= 12.0 && place.y < 18.0) return texture(image, uvOf(place - param2(29)));",
+  "  return texture(image, uv);",
+  "}",
+].join("\\n")));
+const placed = (w, h) => [TSE_OP_LAYER_BEGIN, 0x00ff00ff, TSE_BLEND_NORMAL, TSE_OP_RECT, ...T, w, h, 0x0000ffff,
+  TSE_OP_LAYER_END, TSE_BLEND_NORMAL, 0xffffffff, 1, 2, 0, ...Array.from({ length: TSE_SHADER_PARAMS }, (_, i) => (i === 20 ? 1 : i === 30 ? 12 : 0))];
+// The game doubled by the view: place is in its units.
+draw([TSE_OP_VIEW, 2, 0, 0, 2, 0, 0, ...placed(32, 12)]);
+out.placeLookup = pixel(4, 4); out.placeLayer = pixel(20, 4); out.placeShifted = pixel(20, 30); out.placeBelow = pixel(20, 44);
+// On a 2x screen with no view: pixel and place are in units, half the drawing buffer's pixels.
+draw([TSE_OP_VIEW, 1, 0, 0, 1, 0, 0, ...placed(32, 6)], 2);
+out.dpiLookup = pixel(4, 60); out.dpiLayer = pixel(20, 4); out.dpiShifted = pixel(20, 30); out.dpiBelow = pixel(20, 44);
 
 window.result = out;
 `;
@@ -154,6 +172,14 @@ test(
       assert.deepEqual(r.shadedMirroredView, [255, 0, 0, 255], "a mirroring view undoes the half turn");
       assert.deepEqual(r.shadedNoShader, [255, 255, 255, 255], "an unknown shader handle draws the region plainly");
       assert.deepEqual(r.afterShaded, [255, 0, 0, 255], "a plain region after a shaded sprite is drawn plainly");
+      assert.deepEqual(r.placeLookup, [255, 0, 0, 255], "a layer's shader reads its lookup where place, in the view's units, is left of 4");
+      assert.deepEqual(r.placeLayer, [0, 0, 255, 255], "...and the layer elsewhere");
+      assert.deepEqual(r.placeShifted, [0, 0, 255, 255], "uvOf finds what is 12 units up, the right way up, past the eighth parameter");
+      assert.deepEqual(r.placeBelow, [0, 255, 0, 255], "...and below that the layer is as it was");
+      assert.deepEqual(r.dpiLookup, [255, 0, 0, 255], "on a 2x screen, place is in units: x < 4 is the first 8 pixels");
+      assert.deepEqual(r.dpiLayer, [0, 0, 255, 255]);
+      assert.deepEqual(r.dpiShifted, [0, 0, 255, 255], "...and pixel and uvOf agree with it");
+      assert.deepEqual(r.dpiBelow, [0, 255, 0, 255]);
     } finally {
       await browser.close();
     }

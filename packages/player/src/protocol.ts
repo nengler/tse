@@ -7,7 +7,7 @@ import { KEY_NAMES, type KeyName } from "@tsengine/runtime";
 
 import { BUILTIN_FONT_METRICS } from "./fonts.ts";
 
-export const TSE_ABI_VERSION = 16;
+export const TSE_ABI_VERSION = 17;
 
 // Draw records: a flat array of doubles, each record starting with its op.
 export const TSE_OP_VIEW = 1;
@@ -38,9 +38,9 @@ export const TSE_OP_CANVAS_LEN = 8;
 export const TSE_OP_SPRITE_REGION_LEN = 15;
 export const TSE_OP_BOX_LEN = 12;
 export const TSE_OP_LAYER_BEGIN_LEN = 3;
-export const TSE_OP_LAYER_END_LEN = 13;
+export const TSE_OP_LAYER_END_LEN = 38;
 export const TSE_OP_LIGHT_LEN = 8;
-export const TSE_OP_SPRITE_SHADED_LEN = 26;
+export const TSE_OP_SPRITE_SHADED_LEN = 50;
 
 /** What `tse_load_shader` gives in a build that cannot run shaders (the software renderer). Not in `PROTOCOL`: the header writes it in parentheses. */
 export const TSE_SHADER_UNSUPPORTED = -2;
@@ -50,6 +50,9 @@ export const TSE_BLEND_NORMAL = 0;
 export const TSE_BLEND_ADD = 1;
 export const TSE_BLEND_MULTIPLY = 2;
 export const TSE_BLEND_SCREEN = 3;
+
+/** How many numbers a shader is given as `params` (ABI v17; eight before): the last fields of a shaded record. */
+export const TSE_SHADER_PARAMS = 32;
 
 /** How deep layers nest. */
 export const TSE_LAYER_MAX = 4;
@@ -134,6 +137,7 @@ export const PROTOCOL = {
   TSE_BLEND_ADD,
   TSE_BLEND_MULTIPLY,
   TSE_BLEND_SCREEN,
+  TSE_SHADER_PARAMS,
   TSE_LAYER_MAX,
   TSE_SPRITE_FLIP_X,
   TSE_SPRITE_FLIP_Y,

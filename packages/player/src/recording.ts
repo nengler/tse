@@ -44,6 +44,7 @@ import {
   TSE_OP_SPRITE_REGION_LEN,
   TSE_OP_SPRITE_SHADED,
   TSE_OP_SPRITE_SHADED_LEN,
+  TSE_SHADER_PARAMS,
   TSE_SPRITE_FLIP_X,
   TSE_SPRITE_FLIP_Y,
   TSE_SPRITE_SILHOUETTE,
@@ -64,6 +65,16 @@ interface Placed {
 /** A draw record in readable form; colours are `#rrggbbaa` and textures are the path they were loaded from. */
 /** A blend mode by name, as `<Layer blend>` takes it. */
 export type BlendName = "normal" | "add" | "multiply" | "screen";
+
+/**
+ * A shaded record's `TSE_SHADER_PARAMS` params from `at`, as a list: the first eight always (as many as a shader had before ABI
+ * v17), and those after only up to the last that is not 0, so a test of a shader with a few params reads them plainly.
+ */
+function shaderParams(records: Float64Array, at: number): number[] {
+  let end = TSE_SHADER_PARAMS;
+  while (end > 8 && records[at + end - 1] === 0) end--;
+  return Array.from(records.subarray(at, at + end));
+}
 
 function blendName(code: number): BlendName {
   return code === TSE_BLEND_ADD ? "add" : code === TSE_BLEND_MULTIPLY ? "multiply" : code === TSE_BLEND_SCREEN ? "screen" : "normal";
@@ -97,7 +108,8 @@ export type DecodedRecord =
   | { readonly op: "layerBegin"; readonly clear: string; readonly childBlend: BlendName }
   /**
    * The innermost layer closes and is laid over what is below it with `blend`, its colours multiplied by `tint`, through `shader` (the
-   * path it was loaded from, or null) with `time` and its eight `params` (ABI v11).
+   * path it was loaded from, or null) with `time`, its `params` (ABI v11; see `shaderParams`) and, when it has one, `lookup` (a
+   * texture's path, ABI v17).
    */
   | {
       readonly op: "layerEnd";
@@ -106,6 +118,7 @@ export type DecodedRecord =
       readonly shader: string | null;
       readonly time: number;
       readonly params: readonly number[];
+      readonly lookup?: string;
     }
   | {
       readonly op: "view";
@@ -132,7 +145,7 @@ export type DecodedRecord =
       /** Present (true) only when the record draws the region's shape in the tint (TSE_SPRITE_SILHOUETTE): a sprite's `flash`. */
       readonly silhouette?: true;
     } & Placed)
-  /** A region drawn through `shader` (the path it was loaded from), given `lookup` (a texture's path, or null), `time` and its eight `params` (ABI v16). */
+  /** A region drawn through `shader` (the path it was loaded from), given `lookup` (a texture's path, or null), `time` and its `params` (ABI v16; see `shaderParams`). */
   | ({
       readonly op: "spriteShaded";
       readonly texture: string;
@@ -469,13 +482,18 @@ export class RecordingBackend implements Backend {
             const handle = records[at + 3]!;
             const shader = handle >= 0 ? this.#shaders[handle] : null;
             if (shader === undefined) throw new Error(`Layer end record uses shader handle ${handle}, which was never loaded.`);
+            const lookupHandle = records[at + 4]!;
+            const lookup = lookupHandle >= 0 ? this.#textures[lookupHandle] : null;
+            if (lookup === undefined)
+              throw new Error(`Layer end record uses lookup texture handle ${lookupHandle}, which was never loaded.`);
             out?.push({
               op: "layerEnd",
               blend: blendName(records[at + 1]!),
               tint: colorToHex(records[at + 2]!),
               shader,
-              time: records[at + 4]!,
-              params: Array.from(records.subarray(at + 5, at + 13)),
+              time: records[at + 5]!,
+              params: shaderParams(records, at + 6),
+              ...(lookup !== null ? { lookup } : {}),
             });
           }
           at += TSE_OP_LAYER_END_LEN;
@@ -542,7 +560,7 @@ export class RecordingBackend implements Backend {
             shader,
             lookup,
             time: records[at + 17]!,
-            params: Array.from(records.subarray(at + 18, at + 26)),
+            params: shaderParams(records, at + 18),
           });
           at += TSE_OP_SPRITE_SHADED_LEN;
           break;

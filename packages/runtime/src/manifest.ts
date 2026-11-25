@@ -116,6 +116,9 @@ const DRAG_POINT = [
   { name: "x", type: "number" },
   { name: "y", type: "number" },
 ];
+/** What `onLayout` is told: where the box was laid out. */
+const LAYOUT_BOX = [{ name: "box", type: "LayoutBox" }];
+
 const DRAG_CALLBACKS = { onDragStart: DRAG_POINT, onDrag: DRAG_POINT, onDragEnd: DRAG_POINT, onPressOutside: [] };
 
 const FLEX_FIELDS = [
@@ -195,6 +198,8 @@ const FLEX_FIELDS = [
   "onFocus",
   "onBlur",
   "onAdjust",
+  "onLayout",
+  "reportedLayout",
   "box",
   "widget",
 ] as const;
@@ -438,10 +443,10 @@ export const runtimeManifest: RuntimeManifest = {
     Router: ["transition", "duration", "coverColor", "cover", "route", "current", "transitioning"],
     Route: ["name", "keepAlive", "visible", "active"],
     Provider: ["name", "context", "value", "addReader", "removeReader"],
-    Layer: ["name", "blend", "childBlend", "clear", "opacity", "shader", "params"],
+    Layer: ["name", "blend", "childBlend", "clear", "opacity", "shader", "params", "lookup"],
     Light: ["radius", "color", "intensity"],
-    Lighting: ["name", "blend", "childBlend", "clear", "opacity", "shader", "params", "ambient"],
-    Flex: [...FLEX_FIELDS, "floats", "contains", "containsIn", "boxPoint", "focusPoint", "onNavigate"],
+    Lighting: ["name", "blend", "childBlend", "clear", "opacity", "shader", "params", "lookup", "ambient"],
+    Flex: [...FLEX_FIELDS, "floats", "contains", "containsIn", "boxPoint", "focusPoint", "reportLayout", "onNavigate"],
     // A widget is a Flex with more: its members are Flex's fields, and what it adds (the methods Flex has are its prototype's, not its own).
     Slider: [
       ...FLEX_FIELDS,
@@ -614,6 +619,7 @@ export const runtimeManifest: RuntimeManifest = {
       onFocus: [],
       onBlur: [],
       onAdjust: [{ name: "direction", type: "number" }],
+      onLayout: LAYOUT_BOX,
     },
     Button: {
       onPress: [],
@@ -623,6 +629,7 @@ export const runtimeManifest: RuntimeManifest = {
       onFocus: [],
       onBlur: [],
       onAdjust: [{ name: "direction", type: "number" }],
+      onLayout: LAYOUT_BOX,
     },
     Menu: {
       onPress: [],
@@ -632,6 +639,7 @@ export const runtimeManifest: RuntimeManifest = {
       onFocus: [],
       onBlur: [],
       onAdjust: [{ name: "direction", type: "number" }],
+      onLayout: LAYOUT_BOX,
       onBack: [],
     },
     Tooltip: {
@@ -642,6 +650,7 @@ export const runtimeManifest: RuntimeManifest = {
       onFocus: [],
       onBlur: [],
       onAdjust: [{ name: "direction", type: "number" }],
+      onLayout: LAYOUT_BOX,
     },
     TextInput: {
       onPress: [],
@@ -651,6 +660,7 @@ export const runtimeManifest: RuntimeManifest = {
       onFocus: [],
       onBlur: [],
       onAdjust: [{ name: "direction", type: "number" }],
+      onLayout: LAYOUT_BOX,
       onChange: [{ name: "value", type: "string" }],
       onSubmit: [{ name: "value", type: "string" }],
     },
@@ -662,6 +672,7 @@ export const runtimeManifest: RuntimeManifest = {
       onFocus: [],
       onBlur: [],
       onAdjust: [{ name: "direction", type: "number" }],
+      onLayout: LAYOUT_BOX,
       onChange: [{ name: "value", type: "number" }],
     },
     Toggle: {
@@ -671,6 +682,7 @@ export const runtimeManifest: RuntimeManifest = {
       onFocus: [],
       onBlur: [],
       onAdjust: [{ name: "direction", type: "number" }],
+      onLayout: LAYOUT_BOX,
       onChange: [{ name: "checked", type: "boolean" }],
     },
   },
@@ -796,6 +808,7 @@ export const runtimeManifest: RuntimeManifest = {
       properties: ["pointerX", "pointerY", "typed", "pressHandled"],
     },
     Contact: { methods: {}, properties: ["tag", "owner", "data"] },
+    LayoutBox: { methods: {}, properties: ["x", "y", "width", "height"] },
   },
   functions: {
     clamp: 3,

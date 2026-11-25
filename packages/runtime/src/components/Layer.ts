@@ -1,5 +1,12 @@
 import { Entity, type EntityProps } from "./Entity.ts";
 
+/**
+ * What a shader is given as `params`: numbers, or lists of numbers (a point, a colour, a list of ripples), laid end to end, up to
+ * 32 numbers in all (ABI v17; eight before). `[split, [x, y], [x2, y2]]` is `params[0]` to `params[4]`; a shader reads a list back
+ * with `param2(i)`, `param3(i)` or `param4(i)`, or in a loop over `params[i]`.
+ */
+export type ShaderParams = readonly (number | readonly number[])[];
+
 /** How what is drawn meets what is under it. */
 export type BlendMode = "normal" | "add" | "multiply" | "screen";
 
@@ -24,18 +31,23 @@ export interface LayerProps extends EntityProps {
   /**
    * A shader each of the layer's pixels goes through as it is laid over (ABI v11): a file under `assets/` holding one GLSL function,
    * `vec4 effect(vec2 uv)`, given `image` (the layer: `texture(image, uv)`), `pixel` (from the top left), `resolution`, `time` (the
-   * game's seconds) and `params`. The software renderer runs none, and lays the layer over as it is.
+   * game's seconds), `params` and `lookup`. Since ABI v17 also `place`: where the pixel is in the coordinates the layer's children
+   * are placed in (under a `<Screen>`, the game's own pixels, wherever the screen sits in the window), and `uvOf(place)`, the `uv`
+   * at which `image` holds what is at a place (the layer's image is held bottom row first, so `uv.y` grows upwards: `uvOf` is how
+   * to sample somewhere else without minding that). The software renderer runs none, and lays the layer over as it is.
    */
   shader?: string;
-  /** Up to eight numbers the shader reads as `params[0]` to `params[7]`; the rest are 0. */
-  params?: readonly number[];
+  /** Up to 32 numbers the shader reads as `params[0]` to `params[31]` (the rest are 0); a list among them is laid out in place. See `ShaderParams`. */
+  params?: ShaderParams;
+  /** An image under `assets/` the shader reads as `lookup` (a palette, a colour table); without one, `lookup` is a white pixel. */
+  lookup?: string;
 }
 
 /**
  * A container whose children are drawn off screen, into a layer the size of the screen, which is then laid over what is under it
  * with a blend mode: the way to darken a cave and light it again (`<Layer blend="multiply" clear="#202038" childBlend="add">`, its
- * children the lights), or to add a glow. Layers nest, four deep. Inside a layer, children are drawn in tree order: a `z` there is
- * ignored, and the layer as a whole is drawn at its own `z`.
+ * children the lights), or to add a glow. Layers nest, four deep. Inside a layer, children are drawn in `z` order among themselves, as
+ * anywhere else, and the layer as a whole is drawn at its own `z` among what is around it.
  */
 export class Layer<P extends object = {}> extends Entity<P> {
   static override readonly intrinsic = true;
@@ -45,7 +57,8 @@ export class Layer<P extends object = {}> extends Entity<P> {
   clear: string;
   opacity: number;
   shader: string;
-  params: readonly number[];
+  params: ShaderParams;
+  lookup: string;
 
   constructor(hostProps: LayerProps = {}, props?: P, defaults?: Partial<P>) {
     super(hostProps, props, defaults);
@@ -55,5 +68,6 @@ export class Layer<P extends object = {}> extends Entity<P> {
     this.opacity = hostProps.opacity ?? 1;
     this.shader = hostProps.shader ?? "";
     this.params = hostProps.params ?? [];
+    this.lookup = hostProps.lookup ?? "";
   }
 }

@@ -390,20 +390,34 @@ static bool begin_layer(uint32_t clear, int32_t child_blend) {
   return true;
 }
 
-/* Start drawing through a shader and give it its inputs: the target's size, `time`, the eight parameters (0 where missing or not
- * finite), the region of the image drawn, how the image is turned (the columns of a 2x2 matrix) and the lookup texture (a white
- * pixel when there is none). What is drawn next must be flushed before EndShaderMode, which binds the lookup texture with it. */
+/* Start drawing through a shader and give it its inputs: the target's size, `time`, the TSE_SHADER_PARAMS parameters (0 where not
+ * finite), the region of the image drawn, how the image is turned (the columns of a 2x2 matrix), the lookup texture (a white pixel
+ * when there is none), the target's pixels per unit (for `pixel` in units) and the view (for `place`). What is drawn next must be
+ * flushed before EndShaderMode, which binds the lookup texture with it. */
 static void begin_shader(const TseShader *shader, float time, const double *params, const float region[4], const float turn[4],
                          int32_t lookup_handle) {
   BeginShaderMode(shader->shader);
   float resolution[2] = { (float)target.width / target.scale, (float)target.height / target.scale }; /* in logical pixels */
-  float p[8];
-  for (int i = 0; i < 8; i++) p[i] = params != NULL && isfinite(params[i]) ? (float)params[i] : 0.0f;
+  float p[TSE_SHADER_PARAMS];
+  for (int i = 0; i < TSE_SHADER_PARAMS; i++) p[i] = params != NULL && isfinite(params[i]) ? (float)params[i] : 0.0f;
   if (shader->resolution >= 0) SetShaderValue(shader->shader, shader->resolution, resolution, SHADER_UNIFORM_VEC2);
   if (shader->time >= 0) SetShaderValue(shader->shader, shader->time, &time, SHADER_UNIFORM_FLOAT);
-  if (shader->params >= 0) SetShaderValueV(shader->shader, shader->params, p, SHADER_UNIFORM_FLOAT, 8);
+  if (shader->params >= 0) SetShaderValueV(shader->shader, shader->params, p, SHADER_UNIFORM_FLOAT, TSE_SHADER_PARAMS);
   if (shader->region >= 0) SetShaderValue(shader->shader, shader->region, region, SHADER_UNIFORM_VEC4);
   if (shader->turn >= 0) SetShaderValue(shader->shader, shader->turn, turn, SHADER_UNIFORM_VEC4);
+  if (shader->scale >= 0) SetShaderValue(shader->shader, shader->scale, &target.scale, SHADER_UNIFORM_FLOAT);
+  /* The view's linear part as its columns, and its shift: x' = a x + c y + e. The identity where no view is in force. */
+  float view[4] = { 1.0f, 0.0f, 0.0f, 1.0f }, shift[2] = { 0.0f, 0.0f };
+  if (target.view_pushed) {
+    view[0] = target.view[0];
+    view[1] = target.view[1];
+    view[2] = target.view[4];
+    view[3] = target.view[5];
+    shift[0] = target.view[12];
+    shift[1] = target.view[13];
+  }
+  if (shader->view >= 0) SetShaderValue(shader->shader, shader->view, view, SHADER_UNIFORM_VEC4);
+  if (shader->shift >= 0) SetShaderValue(shader->shader, shader->shift, shift, SHADER_UNIFORM_VEC2);
   if (shader->lookup >= 0) {
     Texture2D lookup;
     if (!assets_texture(lookup_handle, &lookup)) lookup = (Texture2D){ rlGetTextureIdDefault(), 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
@@ -413,7 +427,7 @@ static void begin_shader(const TseShader *shader, float time, const double *para
 
 static const float IDENTITY_TURN[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
 
-static void end_layer(int32_t blend, uint32_t tint, int32_t shader_handle, float time, const double *params) {
+static void end_layer(int32_t blend, uint32_t tint, int32_t shader_handle, int32_t lookup_handle, float time, const double *params) {
   if (target.depth == 0) return;
   RenderTexture2D *layer = &state.layers[target.depth - 1];
   end_current_target();
@@ -436,7 +450,7 @@ static void end_layer(int32_t blend, uint32_t tint, int32_t shader_handle, float
   bool shaded = assets_shader(shader_handle, &shader);
   if (shaded) {
     const float region[4] = { 0.0f, 0.0f, (float)target.width, (float)target.height };
-    begin_shader(&shader, time, params, region, IDENTITY_TURN, -1);
+    begin_shader(&shader, time, params, region, IDENTITY_TURN, lookup_handle);
   }
   /* The destination is in the units drawing uses here, which the window's scale (or a parent layer's) takes to its pixels. */
   DrawTexturePro(layer->texture, (Rectangle){ 0.0f, 0.0f, (float)target.width, -(float)target.height },
@@ -609,7 +623,7 @@ static void execute_records(const double *records, int32_t length, const char *t
           report_bad_frame("layer end with no layer open", at);
           goto done;
         }
-        end_layer(blend_of(r[1]), to_color(r[2]), to_index(r[3]), isfinite(r[4]) ? (float)r[4] : 0.0f, r + 5);
+        end_layer(blend_of(r[1]), to_color(r[2]), to_index(r[3]), to_index(r[4]), isfinite(r[5]) ? (float)r[5] : 0.0f, r + 6);
         break;
       case TSE_OP_SCISSOR: {
         /* NaN or negative sizes clip everything, which is what an empty rectangle means. */
@@ -688,7 +702,7 @@ static void execute_records(const double *records, int32_t length, const char *t
   }
 done:
   /* A layer still open is closed as if by an END: laid over its target, normal, white. */
-  while (target.depth > 0) end_layer(TSE_BLEND_NORMAL, 0xFFFFFFFFu, -1, 0.0f, NULL);
+  while (target.depth > 0) end_layer(TSE_BLEND_NORMAL, 0xFFFFFFFFu, -1, -1, 0.0f, NULL);
   set_blend(TSE_BLEND_NORMAL, false);
   if (target.scissor_on) EndScissorMode();
   if (target.view_pushed) rlPopMatrix();
